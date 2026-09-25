@@ -1,0 +1,62 @@
+{
+  "smtp_db": {
+    "title": "Custom SMTP + Database",
+    "intro": "Use your SMTP provider settings and store credentials encrypted in the database.",
+    "steps": [
+      {
+        "title": "Collect SMTP details",
+        "paragraphs": [
+          "Copy your SMTP host, port, encryption method, and authentication credentials from your provider dashboard."
+        ]
+      },
+      {
+        "title": "Configure in Boolean SMTP",
+        "paragraphs": [
+          "Choose Credential Storage: Database, enter Host and Port, then set encryption and Auto TLS."
+        ]
+      },
+      {
+        "title": "Enable authentication if required",
+        "paragraphs": [
+          "Set Authentication to On only if your provider requires it, then enter username and SMTP password."
+        ]
+      },
+      {
+        "title": "Save and test",
+        "paragraphs": [
+          "Save the connection and send a test email to verify credentials and connectivity."
+        ]
+      }
+    ]
+  },
+  "smtp_wp_config": {
+    "title": "Custom SMTP + wp-config.php",
+    "intro": "Keep SMTP secrets outside the database by defining constants in wp-config.php.",
+    "steps": [
+      {
+        "title": "Copy constants from the form",
+        "paragraphs": [
+          "Switch Credential Storage to WP Config and copy the generated BOOLEANSMTP_SMTP_* constants."
+        ]
+      },
+      {
+        "title": "Add constants to wp-config.php",
+        "paragraphs": [
+          "Paste and update the values in wp-config.php on your WordPress host, then keep Authentication aligned with your constants."
+        ]
+      },
+      {
+        "title": "Confirm and save",
+        "paragraphs": [
+          "Check the confirmation box in the form and save the connection."
+        ]
+      },
+      {
+        "title": "Run a test email",
+        "paragraphs": [
+          "Send a test email to ensure the constants and SMTP endpoint are configured correctly."
+        ]
+      }
+    ]
+  }
+}

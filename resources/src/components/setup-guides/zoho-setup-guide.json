@@ -1,0 +1,75 @@
+{
+  "api_db": {
+    "title": "OAuth API + Database",
+    "intro": "Use Zoho OAuth client credentials stored in the database, then authorize to save tokens.",
+    "steps": [
+      {
+        "title": "Create Zoho OAuth client",
+        "paragraphs": [
+          "In Zoho API Console, create a Server-based client and note Client ID and Client Secret."
+        ],
+        "link": { "label": "Zoho API Console", "href": "https://api-console.zoho.com/" }
+      },
+      {
+        "title": "Region and redirect URI",
+        "paragraphs": [
+          "Select the correct Zoho region, add the redirect URI shown in this plugin, then paste credentials in Database mode."
+        ]
+      },
+      {
+        "title": "Verify and authorize",
+        "paragraphs": [
+          "Verify credentials, then Authorize to complete OAuth and store tokens."
+        ]
+      }
+    ]
+  },
+  "api_wp_config": {
+    "title": "OAuth API + wp-config.php",
+    "intro": "Store OAuth client credentials as wp-config constants; tokens are still saved after authorization.",
+    "steps": [
+      {
+        "title": "Add client constants",
+        "paragraphs": [
+          "Copy the generated BOOLEANSMTP_ZOHO_* constants into wp-config.php."
+        ]
+      },
+      {
+        "title": "WP Config storage mode",
+        "paragraphs": [
+          "Switch to WP Config, confirm the checkbox, then verify and authorize."
+        ]
+      }
+    ]
+  },
+  "smtp_db": {
+    "title": "SMTP + Database",
+    "intro": "Use Zoho SMTP with username/password stored in the database.",
+    "steps": [
+      {
+        "title": "App password",
+        "paragraphs": [
+          "If required by your account, generate an app password for SMTP authentication."
+        ]
+      },
+      {
+        "title": "Endpoint and credentials",
+        "paragraphs": [
+          "Choose SMTP mode, pick the endpoint preset, enter Zoho email and password in Database storage."
+        ]
+      }
+    ]
+  },
+  "smtp_wp_config": {
+    "title": "SMTP + wp-config.php",
+    "intro": "Define SMTP credentials via wp-config constants instead of storing them in the database.",
+    "steps": [
+      {
+        "title": "Copy constants",
+        "paragraphs": [
+          "Paste generated constants into wp-config.php and confirm the acknowledgement checkbox."
+        ]
+      }
+    ]
+  }
+}

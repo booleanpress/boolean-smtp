@@ -1,0 +1,135 @@
+{
+  "api_db": {
+    "title": "API + Database",
+    "intro": "Use Gmail API OAuth credentials stored in the database for the Google connection.",
+    "steps": [
+      {
+        "title": "Create OAuth app in Google Cloud",
+        "paragraphs": [
+          "Enable Gmail API, configure consent screen, and create a Web OAuth client."
+        ],
+        "link": { "label": "Google Cloud Console", "href": "https://console.cloud.google.com/" }
+      },
+      {
+        "title": "Enter Client ID and Secret",
+        "paragraphs": [
+          "Choose Database storage, paste Client ID and Client Secret, then verify credentials."
+        ]
+      },
+      {
+        "title": "Authorize and save tokens",
+        "paragraphs": [
+          "Click Authorize and complete account consent to store refresh/access tokens."
+        ]
+      },
+      {
+        "title": "Publish the OAuth consent screen (do not skip)",
+        "paragraphs": [
+          "A brand-new consent screen defaults to Testing status, which caps you at 100 test users and silently expires your refresh token after 7 days -- your connection will stop working a week later with no error anywhere in BooleanSMTP. In Google Cloud Console > APIs & Services > OAuth consent screen, set Publishing status to In production. This does not require Google's app review for your own single-site use; verification is only enforced once an app is shared publicly at scale."
+        ]
+      }
+    ]
+  },
+  "api_wp_config": {
+    "title": "API + wp-config.php",
+    "intro": "Keep OAuth client credentials in constants and only store tokens in the app after authorization.",
+    "steps": [
+      {
+        "title": "Add constants from code snippet",
+        "paragraphs": [
+          "Copy the generated constants and place them in wp-config.php."
+        ]
+      },
+      {
+        "title": "Use WP Config storage mode",
+        "paragraphs": [
+          "Switch to WP Config mode and continue with verify + authorize flow."
+        ]
+      },
+      {
+        "title": "Publish the OAuth consent screen (do not skip)",
+        "paragraphs": [
+          "Same as Database storage mode: set Publishing status to In production in Google Cloud Console's OAuth consent screen settings, or your refresh token silently expires after 7 days."
+        ]
+      }
+    ]
+  },
+  "smtp_db": {
+    "title": "SMTP + Database",
+    "intro": "Use Google SMTP app password and endpoint settings stored in database.",
+    "steps": [
+      {
+        "title": "Generate app password",
+        "paragraphs": [
+          "Enable 2FA in Google account and generate an app password."
+        ]
+      },
+      {
+        "title": "Enter SMTP details",
+        "paragraphs": [
+          "Choose SMTP mode, keep endpoint preset, and provide username + app password. Sending 2,000+ emails/day on a Workspace account? Switch the endpoint preset to a Workspace Relay option (smtp-relay.gmail.com) instead -- it needs this server's IP allow-listed in the Workspace Admin console first (Apps > Google Workspace > Gmail > Routing > SMTP relay), but raises the daily ceiling well above the standard limit."
+        ]
+      }
+    ]
+  },
+  "smtp_wp_config": {
+    "title": "SMTP + wp-config.php",
+    "intro": "Define SMTP credentials and presets via wp-config constants.",
+    "steps": [
+      {
+        "title": "Copy constants and add to wp-config.php",
+        "paragraphs": [
+          "Use the generated constants block and save the file."
+        ]
+      },
+      {
+        "title": "Register connection",
+        "paragraphs": [
+          "Keep storage in WP Config mode and save connection."
+        ]
+      }
+    ]
+  },
+  "one_click_db": {
+    "title": "API (One Click) + Database",
+    "intro": "Use the hosted BooleanSMTP OAuth proxy for a fast Google connection without manual Google Cloud Console setup.",
+    "steps": [
+      {
+        "title": "Select API (One Click)",
+        "paragraphs": [
+          "Choose API (One Click) mode and keep Credential Storage as Database."
+        ]
+      },
+      {
+        "title": "Connect with Google",
+        "paragraphs": [
+          "Click Connect with Google and complete consent in the hosted One Click flow."
+        ]
+      },
+      {
+        "title": "Save and test",
+        "paragraphs": [
+          "Save connection after token status shows connected, then send a test email."
+        ]
+      }
+    ]
+  },
+  "one_click_wp_config": {
+    "title": "API (One Click) + External Config",
+    "intro": "One Click token storage remains encrypted in database; external credential mode can still be used for sender settings.",
+    "steps": [
+      {
+        "title": "Connect first",
+        "paragraphs": [
+          "Use Connect with Google to complete One Click OAuth and store bearer token."
+        ]
+      },
+      {
+        "title": "Confirm settings and save",
+        "paragraphs": [
+          "Save the connection and verify a test email. If One Click send fails, reconnect; SMTP fallback is not automatic in this mode."
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,381 @@
+/*
+ * BooleanSMTP admin theme — canonical shadcn/ui (Tailwind v4, OKLCH, class-based dark mode).
+ *
+ * Host integration notes (WordPress admin):
+ *  - Tailwind runs in `important` mode. WP admin stylesheets (common.css, forms.css) are
+ *    unlayered element selectors that would otherwise beat Tailwind's layered utilities;
+ *    `important` lets every utility win without `!`-prefixed classes in JSX.
+ *  - Dark mode is the `.dark` class on <html>, toggled by components/theme-provider.jsx (see main.jsx).
+ *  - Everything WordPress-specific is scoped to `body.toplevel_page_boolean-smtp`
+ *    or `#boolean-smtp-app` and lives at the bottom of this file.
+ */
+/* Declared before Tailwind's layers so its `!important` rules outrank the utilities' (see the
+   overlay and reduced-motion rules at the end of this file). */
+@layer overrides;
+@import "tailwindcss" important;
+@import "tw-animate-css";
+
+/* The Pro add-on ships no stylesheet of its own; its classes are compiled into this one. */
+@source "../../boolean-smtp-pro/resources/src";
+/* Docs and the WP-free preview shell are not UI source (the conventions doc lists forbidden classes as examples). */
+@source not "../UI_CONVENTIONS.md";
+@source not "../preview";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+    --radius: 0.5rem;
+
+    /* Light-mode background/border history, oldest first — revert by restoring a prior
+       value below. Dark mode already had a clear card/background gap and was never touched.
+         1. oklch(0.985 0 0)              — original, too close to --card (white) to read as
+                                             a separate surface.
+         2. oklch(0.955 0 0)              — first fix attempt: same neutral (chroma 0) family,
+                                             just darker.
+         3. oklch(0.9632 0.0034 247.9)    — current: "Cool Gray" #F1F3F5, chosen over #2 for a
+                                             cooler/bluer cast. --border/--input matched to
+                                             #E2E5E9 (oklch(0.9208 0.0063 255.5)) to stay
+                                             paired with it; --card stays pure white (#FFFFFF). */
+    --background: oklch(0.9632 0.0034 247.9);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.546 0.215 262.881);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    /* 0.52: 4.95:1 on the page background, 5.5:1 on cards (WCAG AA needs 4.5:1). */
+    --muted-foreground: oklch(0.52 0 0);
+    --accent: oklch(0.97 0.014 262.881);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.984 0.003 247.858);
+    --success: oklch(0.59 0.127 162.942);
+    --success-foreground: oklch(0.984 0.003 247.858);
+    /* Text on a success/destructive tint (status chips): darker than the tint's own colour so it
+       reaches 4.5:1 — 5.1:1 and 5.6:1 over the chips' 15 % / 10 % tints on a card. */
+    --success-strong: oklch(0.48 0.11 162.942);
+    --destructive-strong: oklch(0.5 0.2 27.325);
+    --info-strong: oklch(0.5 0.2 262.881);
+    --warning: oklch(0.77 0.165 70.661);
+    --warning-foreground: oklch(0.205 0 0);
+    --info: oklch(0.546 0.215 262.881);
+    --info-foreground: oklch(1 0 0);
+    /* Paired with --background above — was oklch(0.922 0 0); now "Cool Gray" #E2E5E9. */
+    --border: oklch(0.9208 0.0063 255.5);
+    --input: oklch(0.9208 0.0063 255.5);
+    --ring: oklch(0.546 0.215 262.881);
+
+    --chart-1: oklch(0.546 0.215 262.881);
+    --chart-2: oklch(0.6 0.118 184.704);
+    --chart-3: oklch(0.453 0.145 262.881);
+    --chart-4: oklch(0.828 0.189 84.429);
+    --chart-5: oklch(0.769 0.188 70.08);
+
+    --sidebar: oklch(1 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.546 0.215 262.881);
+    --sidebar-primary-foreground: oklch(1 0 0);
+    --sidebar-accent: oklch(0.95 0.025 262.881);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.546 0.215 262.881);
+}
+
+.dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.707 0.165 254.624);
+    --primary-foreground: oklch(0.145 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.705 0 0);
+    --accent: oklch(0.269 0.02 262.881);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0 0);
+    --success: oklch(0.773 0.153 163.103);
+    --success-foreground: oklch(0.129 0.042 264.695);
+    --success-strong: var(--success);
+    --destructive-strong: var(--destructive);
+    --info-strong: var(--info);
+    --warning: oklch(0.786 0.16 85.679);
+    --warning-foreground: oklch(0.129 0.042 264.695);
+    --info: oklch(0.707 0.165 254.624);
+    --info-foreground: oklch(0.145 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.707 0.165 254.624);
+
+    --chart-1: oklch(0.707 0.165 254.624);
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+    --chart-4: oklch(0.627 0.265 303.9);
+    --chart-5: oklch(0.645 0.246 16.439);
+
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.707 0.165 254.624);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.269 0.02 262.881);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.707 0.165 254.624);
+}
+
+@theme inline {
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-success-strong: var(--success-strong);
+    --color-destructive-strong: var(--destructive-strong);
+    --color-info-strong: var(--info-strong);
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-info: var(--info);
+    --color-info-foreground: var(--info-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+
+    #boolean-smtp-app {
+        @apply bg-background text-foreground text-sm antialiased;
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* WordPress admin host integration — scoped to this plugin's screen only.    */
+/* ------------------------------------------------------------------------- */
+
+/* Full-bleed app shell inside #wpcontent; the admin bar height comes from WP core's own variable. */
+body.toplevel_page_boolean-smtp {
+    background-color: var(--background);
+}
+
+body.toplevel_page_boolean-smtp #wpcontent {
+    padding-left: 0;
+}
+
+body.toplevel_page_boolean-smtp #wpbody,
+body.toplevel_page_boolean-smtp #wpbody-content {
+    padding-bottom: 0;
+}
+
+/* The framework mounts the app inside a bare `<div class="wrap">`; WP gives .wrap
+   `margin: 10px 20px 0 2px` (12px right below 782px), which would gap the shell
+   away from the admin bar and menu. */
+body.toplevel_page_boolean-smtp #wpbody-content > .wrap {
+    margin: 0;
+    padding: 0;
+}
+
+body.toplevel_page_boolean-smtp #wpfooter,
+body.toplevel_page_boolean-smtp #wpbody-content > .notice,
+body.toplevel_page_boolean-smtp #wpbody-content > .update-nag,
+body.toplevel_page_boolean-smtp #wpbody-content > .updated,
+body.toplevel_page_boolean-smtp #wpbody-content > .error {
+    display: none;
+}
+
+/* Keep WP chrome below Radix overlays (z-50) but above the app's own sticky header (z-40). */
+body.toplevel_page_boolean-smtp #wpadminbar,
+body.toplevel_page_boolean-smtp #adminmenuwrap,
+body.toplevel_page_boolean-smtp #adminmenuback {
+    z-index: 45;
+}
+
+#boolean-smtp-app {
+    height: calc(100vh - var(--wp-admin--admin-bar--height, 32px));
+    display: flex;
+    overflow: hidden;
+    /* Containing block for the fixed-position shadcn Sidebar, so it sits inside #wpcontent
+       (right of the WP admin menu, below the admin bar) instead of at the viewport edge. */
+    contain: layout;
+}
+
+@media screen and (max-width: 782px) {
+    #boolean-smtp-app {
+        height: calc(100vh - var(--wp-admin--admin-bar--height, 46px));
+    }
+}
+
+/*
+ * Neutralise WP admin element styles (common.css / forms.css) inside the app.
+ * These are unlayered so they beat WP's unlayered rules; Tailwind utilities still win
+ * because they are emitted with `!important` (see the import at the top of this file).
+ */
+#boolean-smtp-app :is(h1, h2, h3, h4, h5, h6, p, ul, ol, li, dl, dd, dt, figure, blockquote, pre) {
+    margin: 0;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+}
+
+/*
+ * Radix portals dialogs, menus, popovers and selects to <body>, outside #boolean-smtp-app,
+ * so the ancestor-scoped resets below can't rely on that selector alone. Each overlay's
+ * content root carries a stable data-slot regardless of where it's portaled, so the resets
+ * key off those too.
+ */
+:is(
+    #boolean-smtp-app,
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [data-slot="select-content"]
+) :is(a, label, button, input, select, textarea) {
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    text-decoration: none;
+    box-shadow: none;
+}
+
+:is(
+    #boolean-smtp-app,
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [data-slot="select-content"]
+) :is(input, select, textarea) {
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    background-image: none;
+}
+
+/* Sonner toasts are portaled outside the app root. Keep the dismiss control inside
+ * the toast at its logical end edge so it remains aligned in both LTR and RTL. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+    inset-inline-start: auto;
+    inset-inline-end: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-content] {
+    padding-inline-end: 2rem;
+}
+
+:is(
+    #boolean-smtp-app,
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [data-slot="select-content"]
+) :is(input, select, textarea):focus {
+    box-shadow: none;
+    outline: none;
+}
+
+#boolean-smtp-app ul,
+#boolean-smtp-app ol {
+    list-style: none;
+}
+
+/*
+ * Overlays close at once instead of fading or sliding out.
+ *
+ * The exit animation keeps the closing overlay on its own compositor layer after React has
+ * removed it, and the browser paints that layer once more before dropping it: the menu, the
+ * dialog's backdrop or the drawer flashes back for a frame as it closes. Measured on a real admin
+ * screen by diffing captured frames; with these rules the close produces no frames at all.
+ * Opening still animates.
+ *
+ * The rules live in the `overrides` layer, declared before Tailwind's. Tailwind runs in
+ * `important` mode, and for `!important` declarations the cascade reverses layer order: an
+ * unlayered `!important` loses to a layered one, so the same rules outside a layer were beaten
+ * by every overlay that carries its own `flex`/`grid` and `animate-out` utilities (dialogs,
+ * the command palette, sheets). The earliest layer wins, so this one does.
+ */
+@layer overrides {
+    [data-slot="select-content"][data-state="closed"],
+    [data-slot="dropdown-menu-content"][data-state="closed"],
+    [data-slot="popover-content"][data-state="closed"],
+    [data-slot="tooltip-content"][data-state="closed"],
+    [data-slot="dialog-content"][data-state="closed"],
+    [data-slot="dialog-overlay"][data-state="closed"],
+    [data-slot="alert-dialog-content"][data-state="closed"],
+    [data-slot="alert-dialog-overlay"][data-state="closed"],
+    [data-slot="sheet-content"][data-state="closed"],
+    [data-slot="sheet-overlay"][data-state="closed"] {
+        animation: none !important;
+        display: none !important;
+    }
+}
+
+/*
+ * Visitors who ask the system for less motion get none: no enter/exit animations, no pulsing
+ * status dots, no smooth transitions. State changes still happen, just without movement. In the
+ * `overrides` layer for the same reason as the overlay rules: the utilities' durations are
+ * layered `!important` declarations.
+ */
+@layer overrides {
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+    }
+}

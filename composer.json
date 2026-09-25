@@ -1,0 +1,23 @@
+{
+    "name": "booleanpress/boolean-smtp",
+    "description": "BooleanSMTP \u2014 Smart email delivery for WordPress",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": "^8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "BooleanSmtp\\": "app/",
+            "BooleanSmtp\\Database\\": "database/",
+            "BooleanSmtp\\Core\\": "vendor/booleanpress/core/src/"
+        },
+        "files": [
+            "vendor/booleanpress/core/src/Foundation/functions.php"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "platform-check": false
+    }
+}

@@ -1,0 +1,74 @@
+{
+  "api_db": {
+    "title": "API + Database",
+    "intro": "Use the provider HTTPS API with credentials stored encrypted in the database.",
+    "steps": [
+      {
+        "title": "Open {{provider}} dashboard",
+        "paragraphs": [
+          "Create or copy an API key (or token) from your {{provider}} account with permission to send mail."
+        ]
+      },
+      {
+        "title": "Paste in Database mode",
+        "paragraphs": [
+          "Choose API delivery and Credential Storage: Database, then enter keys and save."
+        ]
+      }
+    ]
+  },
+  "api_wp_config": {
+    "title": "API + wp-config.php",
+    "intro": "Keep API secrets out of the database by defining BOOLEANSMTP_* constants in wp-config.php.",
+    "steps": [
+      {
+        "title": "Copy constants from the form",
+        "paragraphs": [
+          "Switch to WP Config mode and copy the generated define() lines into wp-config.php."
+        ]
+      },
+      {
+        "title": "Save connection",
+        "paragraphs": [
+          "Confirm the acknowledgement checkbox, then register the connection."
+        ]
+      }
+    ]
+  },
+  "smtp_db": {
+    "title": "SMTP + Database",
+    "intro": "Use SMTP with host/port and credentials stored in the database.",
+    "steps": [
+      {
+        "title": "SMTP credentials",
+        "paragraphs": [
+          "From {{provider}}, copy SMTP host, port, encryption, username, and password (or app password)."
+        ]
+      },
+      {
+        "title": "Database mode",
+        "paragraphs": [
+          "Choose SMTP delivery and Credential Storage: Database, then fill host/preset and credentials."
+        ]
+      }
+    ]
+  },
+  "smtp_wp_config": {
+    "title": "SMTP + wp-config.php",
+    "intro": "Define SMTP settings as constants; sensitive values are not stored in the DB.",
+    "steps": [
+      {
+        "title": "Add defines to wp-config.php",
+        "paragraphs": [
+          "Copy the generated constants block and adjust values to match your SMTP endpoint."
+        ]
+      },
+      {
+        "title": "Register",
+        "paragraphs": [
+          "Use WP Config storage, confirm the checkbox, and save."
+        ]
+      }
+    ]
+  }
+}

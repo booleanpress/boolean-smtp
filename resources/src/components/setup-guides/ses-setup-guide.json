@@ -1,0 +1,134 @@
+{
+  "api_db": {
+    "title": "API + Database",
+    "intro": "Store IAM credentials encrypted in the database and send via the SES HTTPS API.",
+    "steps": [
+      {
+        "title": "Create an IAM user with SES permissions",
+        "paragraphs": [
+          "Create a user for programmatic access with an SES-sending policy (AmazonSESFullAccess for testing, or scoped to ses:SendRawEmail, ses:GetSendQuota, ses:GetSendStatistics)."
+        ],
+        "link": {
+          "label": "Open IAM Console",
+          "href": "https://console.aws.amazon.com/iam/home"
+        }
+      },
+      {
+        "title": "Verify identities and mind the sandbox",
+        "paragraphs": [
+          "New accounts start in the SES sandbox — you can only send to verified addresses. Verify sender and recipient in the region you pick below, or sends fail as unverified."
+        ],
+        "link": {
+          "label": "SES verified identities",
+          "href": "https://console.aws.amazon.com/ses/home"
+        }
+      },
+      {
+        "title": "Paste keys in Database mode",
+        "paragraphs": [
+          "Set Credential Storage to Database, enter your Access Key ID and Secret Access Key, pick the region, then save."
+        ]
+      }
+    ],
+    "fullDoc": {
+      "label": "Full SES documentation",
+      "url": "https://docs.aws.amazon.com/ses/latest/dg/send-email-api.html"
+    }
+  },
+  "api_wp_config": {
+    "title": "API + wp-config.php",
+    "intro": "Define AWS constants in wp-config.php so secrets stay out of the database.",
+    "steps": [
+      {
+        "title": "Add constants to wp-config.php",
+        "paragraphs": [
+          "Copy the defines from the connection card (WP Config mode): BOOLEANSMTP_AWS_ACCESS_KEY_ID, BOOLEANSMTP_AWS_SECRET_ACCESS_KEY, BOOLEANSMTP_AWS_REGION."
+        ]
+      },
+      {
+        "title": "IAM user and SES permissions",
+        "paragraphs": [
+          "Create IAM keys with SES-sending permissions, same as Database mode — but paste them only into wp-config.php. Don't define the constants empty; that overrides database credentials."
+        ],
+        "link": {
+          "label": "IAM Console",
+          "href": "https://console.aws.amazon.com/iam/home"
+        }
+      },
+      {
+        "title": "Save the connection",
+        "paragraphs": [
+          "Set Credential Storage to WP Config, complete Sender Settings and region, then save. No secrets are written to the database."
+        ]
+      }
+    ],
+    "fullDoc": {
+      "label": "Full SES documentation",
+      "url": "https://docs.aws.amazon.com/ses/latest/dg/send-email-api.html"
+    }
+  },
+  "smtp_db": {
+    "title": "SMTP + Database",
+    "intro": "Send through SES SMTP endpoints with credentials stored encrypted in the database.",
+    "steps": [
+      {
+        "title": "SMTP credentials in SES",
+        "paragraphs": [
+          "Create SMTP credentials in SES (or compatible IAM SMTP credentials) — distinct from your console login."
+        ],
+        "link": {
+          "label": "SES SMTP settings",
+          "href": "https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html"
+        }
+      },
+      {
+        "title": "Region and host:port",
+        "paragraphs": [
+          "Pick the region where identities are verified, then match the host:port — 587 for STARTTLS or 465 for SSL."
+        ]
+      },
+      {
+        "title": "Database mode",
+        "paragraphs": [
+          "Set Credential Storage to Database, enter region, host:port, SMTP username and password, then save."
+        ]
+      }
+    ],
+    "fullDoc": {
+      "label": "Full SES SMTP documentation",
+      "url": "https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html"
+    }
+  },
+  "smtp_wp_config": {
+    "title": "SMTP + wp-config.php",
+    "intro": "Define SMTP host, port, region, and credentials as constants — nothing sensitive touches the database.",
+    "steps": [
+      {
+        "title": "Copy SMTP constants",
+        "paragraphs": [
+          "In WP Config mode, copy the generated BOOLEANSMTP_AWS_SES_SMTP_* defines and fill in your values."
+        ]
+      },
+      {
+        "title": "Match region and endpoint",
+        "paragraphs": [
+          "Host, port, and encryption must match the SES region where identities are verified — 587 TLS or 465 SSL."
+        ],
+        "link": {
+          "label": "SES SMTP endpoints",
+          "href": "https://docs.aws.amazon.com/ses/latest/dg/smtp-connect.html"
+        }
+      },
+      {
+        "title": "Save without DB secrets",
+        "paragraphs": [
+          "Set Credential Storage to WP Config, delivery to SMTP, complete Sender Settings, then save."
+        ]
+      }
+    ],
+    "fullDoc": {
+      "label": "Full SES SMTP documentation",
+      "url": "https://docs.aws.amazon.com/ses/latest/dg/send-email-smtp.html"
+    }
+  }
+}
