@@ -147,7 +147,7 @@ export default function ConnectionNew() {
                                 className={cn(
                                     'group relative h-auto flex-col items-stretch gap-0 overflow-hidden p-0 text-left whitespace-normal shadow-none transition-colors disabled:opacity-100',
                                     m.launched
-                                        ? 'hover:border-primary'
+                                        ? 'border-foreground/20 bg-card hover:border-primary hover:bg-card'
                                         : 'border-dashed'
                                 )}
                             >
@@ -169,7 +169,10 @@ export default function ConnectionNew() {
                                         )}
                                     </div>
                                 )}
-                                <div className="relative mx-auto flex aspect-[2/1] w-full items-center justify-center overflow-hidden bg-muted p-2.5 transition-colors group-hover:bg-primary/5">
+                                <div className={cn(
+                                    'relative mx-auto flex aspect-[2/1] w-full items-center justify-center overflow-hidden bg-muted p-2.5',
+                                    m.launched && 'bg-card'
+                                )}>
                                     {m.logo ? (
                                         <img src={m.logo} alt={providerName(m)} className="size-full object-contain" />
                                     ) : (

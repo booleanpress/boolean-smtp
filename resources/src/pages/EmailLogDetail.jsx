@@ -292,7 +292,7 @@ export default function EmailLogDetail() {
                         <Card className="gap-2">
                             <CardHeader>
                                 <CardDescription className={sectionLabelClass}>{t('email_log_detail.message_id', 'Message ID')}</CardDescription>
-                                <CardTitle className="font-mono text-sm font-medium break-all text-primary/80">
+                                <CardTitle className="font-mono text-sm font-medium break-all text-primary">
                                     {log.message_id || t('email_log_detail.not_available', 'Not available')}
                                 </CardTitle>
                             </CardHeader>

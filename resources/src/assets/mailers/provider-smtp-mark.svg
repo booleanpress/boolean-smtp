@@ -1,13 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title">
   <title id="title">Custom SMTP</title>
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#4B85FE"/>
-      <stop offset="1" stop-color="#1442BE"/>
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="76" height="76" rx="18" fill="url(#tile)"/>
-  <path d="M56 22H33c-7 0-11 4-11 10s4 10 11 10h14c7 0 11 4 11 10s-4 10-11 10H24" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
-  <circle cx="56" cy="22" r="4" fill="#23D891"/>
-  <circle cx="24" cy="62" r="4" fill="#23D891"/>
+  <rect x="7" y="18" width="66" height="44" rx="5" fill="none" stroke="#1F222E" stroke-width="5"/>
+  <path d="m10 22 30 23 30-23" fill="none" stroke="#1F222E" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
 </svg>

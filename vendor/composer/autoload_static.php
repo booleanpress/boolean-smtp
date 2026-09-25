@@ -4,7 +4,7 @@
 
 namespace Composer\Autoload;
 
-class ComposerStaticInitc8e386a92702e51f2f868714a22f737a
+class ComposerStaticInit180485aaa6b1a38757db7061aab37f54
 {
     public static $files = array (
         '2f6244607cdf7145b3c065ebc6089c37' => __DIR__ . '/..' . '/booleanpress/core/src/Foundation/functions.php',
@@ -358,9 +358,9 @@ class ComposerStaticInitc8e386a92702e51f2f868714a22f737a
     public static function getInitializer(ClassLoader $loader)
     {
         return \Closure::bind(function () use ($loader) {
-            $loader->prefixLengthsPsr4 = ComposerStaticInitc8e386a92702e51f2f868714a22f737a::$prefixLengthsPsr4;
-            $loader->prefixDirsPsr4 = ComposerStaticInitc8e386a92702e51f2f868714a22f737a::$prefixDirsPsr4;
-            $loader->classMap = ComposerStaticInitc8e386a92702e51f2f868714a22f737a::$classMap;
+            $loader->prefixLengthsPsr4 = ComposerStaticInit180485aaa6b1a38757db7061aab37f54::$prefixLengthsPsr4;
+            $loader->prefixDirsPsr4 = ComposerStaticInit180485aaa6b1a38757db7061aab37f54::$prefixDirsPsr4;
+            $loader->classMap = ComposerStaticInit180485aaa6b1a38757db7061aab37f54::$classMap;
 
         }, null, ClassLoader::class);
     }
