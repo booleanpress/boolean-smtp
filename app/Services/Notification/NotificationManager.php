@@ -12,7 +12,6 @@ declare(strict_types=1);
 namespace BooleanSmtp\Services\Notification;
 
 use BooleanSmtp\Contracts\NotificationChannelContract;
-use BooleanSmtp\Contracts\Editions\NotificationLimitContract;
 use BooleanSmtp\Models\NotificationChannel;
 use BooleanSmtp\Repositories\NotificationChannelRepository;
 use BooleanSmtp\Core\Contracts\LoggerContract;
@@ -26,6 +25,19 @@ use function BooleanSmtp\Core\config;
  * @since 1.0.0
  */
 class NotificationManager {
+    /**
+     * The alert providers the plugin ships, used when the `notifications.channels` config is not
+     * loaded (the same list `config/notifications.php` registers).
+     *
+     * @since 1.0.0
+     * @var array<string, class-string<NotificationChannelContract>>
+     */
+    private const BUILT_IN_CHANNELS = [
+        'telegram' => Channels\TelegramChannel::class,
+        'slack'    => Channels\SlackChannel::class,
+        'discord'  => Channels\DiscordChannel::class,
+    ];
+
     /**
      * Channel type to driver class map, loaded from the `notifications.channels` config.
      *
@@ -46,8 +58,8 @@ class NotificationManager {
         private readonly NotificationChannelRepository $channels,
         private readonly LoggerContract $logger,
     ) {
-        $channels = config('notifications.channels', []);
-        foreach ($channels as $type => $class) {
+        $channels = config('notifications.channels', self::BUILT_IN_CHANNELS);
+        foreach (is_array($channels) ? $channels : [] as $type => $class) {
             if (class_exists($class)) {
                 $this->channelDrivers[$type] = $class;
             }
@@ -55,10 +67,11 @@ class NotificationManager {
     }
 
     /**
-     * Sends an alert to every enabled notification channel, subject to the alert's cooldown.
+     * Sends an alert to every enabled alert provider, subject to the alert's cooldown.
      *
      * Does nothing when the alert type is disabled in configuration or is still within its
-     * cooldown window.
+     * cooldown window. Once the alert has gone out, `boolean_smtp_alert_dispatched` fires, so
+     * other code can deliver the same alert to destinations of its own.
      *
      * @since 1.0.0
      *
@@ -68,8 +81,8 @@ class NotificationManager {
      * @return void
      */
     public function notify(string $alertType, string $message, array $context = []): void {
-        $alertConfig = config("notifications.alerts.{$alertType}", []);
-        if (!($alertConfig['enabled'] ?? false)) {
+        $alertConfig = $this->alertTypes()[$alertType] ?? [];
+        if (!\is_array($alertConfig) || !($alertConfig['enabled'] ?? false)) {
             return;
         }
 
@@ -80,6 +93,20 @@ class NotificationManager {
         foreach ($this->channels->findEnabled() as $channel) {
             $this->sendViaChannel($channel, $message, $context);
         }
+
+        /**
+         * Fires after an alert was sent to the alert providers set up on the site.
+         *
+         * Fires once per alert that passed its cooldown, whether or not any provider is set up,
+         * so an extension can deliver the same alert to destinations it manages itself.
+         *
+         * @since 1.0.0
+         *
+         * @param string               $alertType Alert type key, for example `connection_failure`.
+         * @param string               $message   Human-readable alert message.
+         * @param array<string, mixed> $context   The alert's context, as passed to each provider.
+         */
+        \do_action('boolean_smtp_alert_dispatched', $alertType, $message, $context);
     }
 
     /**
@@ -145,40 +172,57 @@ class NotificationManager {
     }
 
     /**
-     * Returns the maximum number of channels allowed for a channel type, as the site's
-     * notification-limit policy sets it.
+     * The alert types the site sends, with whether each is on and its cooldown.
      *
      * @since 1.0.0
      *
-     * @param  string $type Channel type identifier.
-     * @return int
+     * @return array<string, array<string, mixed>>
      */
-    public function maxChannelsForType(string $type): int {
-        return $this->limitPolicy()->maxPerType($type);
+    private function alertTypes(): array {
+        $types = config('notifications.alerts', []);
+
+        /**
+         * Filters the alert types and their settings.
+         *
+         * Each entry is keyed by the alert type and carries `enabled` (bool) and `cooldown`
+         * (seconds between two alerts of that type). Add an entry to send an alert type of your
+         * own through the alert providers set up on the site.
+         *
+         * @since 1.0.0
+         *
+         * @param array<string, array{enabled: bool, cooldown?: int}> $types Alert types keyed by type.
+         * @return array<string, array{enabled: bool, cooldown?: int}> The filtered alert types.
+         */
+        $types = \apply_filters('boolean_smtp_alert_types', \is_array($types) ? $types : []);
+
+        return \is_array($types) ? $types : [];
     }
 
     /**
-     * The message returned when a channel type is at its limit.
+     * Whether a provider type has an alert driver on this site.
      *
      * @since 1.0.0
      *
-     * @param  string $type Channel type identifier.
-     * @param  int    $max  The limit that was reached.
-     * @return string
+     * @param  string $type Provider type, for example `slack`.
+     * @return bool
      */
-    public function channelLimitMessage(string $type, int $max): string {
-        return $this->limitPolicy()->limitMessage($type, $max);
+    public function isAvailable(string $type): bool {
+        return $this->resolveDriver($type) !== null;
     }
 
     /**
-     * The notification-limit policy bound for this site, resolved on each use.
+     * Validation errors for a provider's settings, keyed by setting name.
      *
      * @since 1.0.0
      *
-     * @return NotificationLimitContract
+     * @param  string               $type     Provider type.
+     * @param  array<string, mixed> $settings Settings to check.
+     * @return array<string, string> Empty when the settings are valid or the type is unknown.
      */
-    private function limitPolicy(): NotificationLimitContract {
-        return app(NotificationLimitContract::class);
+    public function validateSettings(string $type, array $settings): array {
+        $driver = $this->resolveDriver($type);
+
+        return $driver === null ? [] : $driver->validateSettings($settings);
     }
 
     /**

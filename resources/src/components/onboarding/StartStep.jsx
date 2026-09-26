@@ -87,7 +87,7 @@ export default function StartStep({ path, onPathChange, scan, migrationSource, o
         {
             value: 'new',
             title: t('onboarding.start_new_title', 'Set up a new connection'),
-            description: t('onboarding.start_new_desc', 'Choose a provider and connect it — about three minutes.'),
+            description: t('onboarding.start_new_desc', 'Choose a provider and connect it. You can test delivery after setup.'),
             media: <Plus className="size-5 text-muted-foreground" aria-hidden="true" />,
         },
         {

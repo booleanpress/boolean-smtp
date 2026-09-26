@@ -19,6 +19,7 @@ use BooleanSmtp\Support\Settings;
 use BooleanSmtp\Services\Mailer\Api\GmailApiSender;
 use BooleanSmtp\Services\Mailer\Api\MicrosoftGraphMailSender;
 use BooleanSmtp\Services\Mailer\Api\SesApiSender;
+use BooleanSmtp\Services\Mailer\Headers\MailHeaders;
 use BooleanSmtp\Services\Settings\ConstantSettingsResolver;
 
 /**
@@ -87,6 +88,9 @@ final class ApiMailDispatcher {
 
         try {
             $phpmailer = WpMailMimeBuilder::createPhpmailerFromAtts($atts);
+            if ($conn->driver === 'outlook') {
+                $this->normalizeOutlookSenderForApi($phpmailer, $atts, $decrypted);
+            }
         } catch (\Throwable $e) {
             return $this->failed($atts, $e->getMessage(), null, null, $settingsRepo);
         }
@@ -212,6 +216,39 @@ final class ApiMailDispatcher {
         \do_action('wp_mail_succeeded', $mailData); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- WordPress core's own mail hook, fired on purpose so API sends keep wp_mail() behaviour for other plugins.
 
         return true;
+    }
+
+    /**
+     * Replace WordPress's generated sender with the selected Outlook mailbox for API sends.
+     *
+     * A message with an explicit From header or a sender changed by wp_mail_from keeps that
+     * identity. The connection and site-wide force settings still run afterwards in MailerManager.
+     *
+     * @since 1.0.0
+     *
+     * @param \PHPMailer\PHPMailer\PHPMailer $phpmailer Built message before phpmailer_init.
+     * @param array<string, mixed> $atts Original wp_mail arguments after its filter.
+     * @param array<string, mixed> $settings Decrypted Outlook connection settings.
+     * @return void
+     */
+    private function normalizeOutlookSenderForApi(\PHPMailer\PHPMailer\PHPMailer $phpmailer, array $atts, array $settings): void {
+        $rawHeaders = $atts['headers'] ?? '';
+        $headers = MailHeaders::fromWpMailHeaders(\is_array($rawHeaders) || \is_string($rawHeaders) ? $rawHeaders : '');
+        if (trim((string) $headers->get('From')) !== '' || !WpMailMimeBuilder::isDefaultFromEmail((string) $phpmailer->From)) {
+            return;
+        }
+
+        $fromEmail = trim((string) ($settings['from_email'] ?? ''));
+        if ($fromEmail === '') {
+            return;
+        }
+
+        $fromName = (string) $phpmailer->FromName;
+        if ($fromName === 'WordPress' && !empty($settings['from_name'])) {
+            $fromName = (string) $settings['from_name'];
+        }
+
+        $phpmailer->setFrom($fromEmail, $fromName, false);
     }
 
     /**

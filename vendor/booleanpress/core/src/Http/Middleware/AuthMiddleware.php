@@ -72,6 +72,9 @@ class AuthMiddleware extends Middleware
 
     /**
      * Log authentication failure for security monitoring.
+     *
+     * @since 0.2.11 Writes to the `core` log channel (when a site has switched it on) instead of PHP's
+     *               error log; `timestamp` is UTC.
      */
     protected function logAuthFailure(Request $request, string $reason, ?string $capability = null): void
     {
@@ -86,7 +89,7 @@ class AuthMiddleware extends Middleware
             'path' => $request->path(),
             'method' => $request->method(),
             'user_agent' => $request->header('User-Agent'),
-            'timestamp' => date('Y-m-d H:i:s'),
+            'timestamp' => gmdate('Y-m-d H:i:s'),
         ];
 
         if ($capability !== null) {
@@ -101,17 +104,23 @@ class AuthMiddleware extends Middleware
             }
         }
 
-        // Log to WordPress error log or custom logger
-        if (function_exists('error_log')) {
-            error_log('[BooleanPress Auth] ' . json_encode($data));
+        if (\BooleanSmtp\Core\Foundation\Application::hasInstance()) {
+            try {
+                $logger = \BooleanSmtp\Core\Foundation\Application::getInstance()->make(\BooleanSmtp\Core\Log\Logger::class);
+                if ($logger->isEnabled()) {
+                    $logger->warning('Request rejected by the authentication middleware.', $data);
+                }
+            } catch (\Throwable) {
+                // intentionally silent: a failed log write must not change the response to the caller.
+            }
         }
 
         if (function_exists('do_action')) {
             /**
              * Fires when a request is rejected by the authentication middleware.
              *
-             * Runs after the failure has been written to the PHP error log, so a plugin can
-             * forward it to its own security monitoring.
+             * Runs after the failure has been written to the `core` log channel (when a site has
+             * switched it on), so a plugin can forward it to its own security monitoring.
              *
              * @since 0.2.3
              *

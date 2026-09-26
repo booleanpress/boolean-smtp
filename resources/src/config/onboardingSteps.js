@@ -57,7 +57,7 @@ export const onboardingSteps = [
         titleKey: 'onboarding.step.verify.title',
         subtitleKey: 'onboarding.step.verify.subtitle',
         title: 'Verify',
-        subtitle: 'Send a test email',
+        subtitle: 'Optional delivery test',
         icon: Send,
     },
     {
@@ -116,7 +116,7 @@ export function isOnboardingStepComplete(stepId, onboarding) {
 }
 
 /**
- * Whether every checklist row is done.
+ * Whether setup is applied, or every checklist row is done before Apply.
  *
  * @since 1.0.0
  *
@@ -124,5 +124,6 @@ export function isOnboardingStepComplete(stepId, onboarding) {
  * @returns {boolean}
  */
 export function isOnboardingComplete(onboarding) {
+    if (onboarding?.review && onboarding?.applied_connection_id) return true;
     return ONBOARDING_STEP_IDS.every(id => isOnboardingStepComplete(id, onboarding));
 }

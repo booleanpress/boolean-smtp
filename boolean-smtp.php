@@ -5,7 +5,7 @@
  * Description: Smart email delivery for WordPress — reliable SMTP, API mailers, email logging, failure alerts, and developer tools.
  * Version: 1.0.0
  * Author: BooleanPress
- * Author URI: https://booleansmtp.com
+ * Author URI: https://booleansmtp.com/about/
  * Text Domain: boolean-smtp
  * Domain Path: /resources/languages
  * Requires PHP: 8.1
@@ -101,45 +101,6 @@ if (function_exists('add_filter')) {
     });
 }
 
-/*
- * Optional debug logging constants, each defaulting to disabled. Override any of them in
- * wp-config.php before this file loads to enable HTTP, query, request, or mailer diagnostic
- * logging for troubleshooting.
- *
- * @since 1.0.0
- */
-if (!defined('BOOLEAN_SMTP_DEBUG_HTTP')) {
-    define('BOOLEAN_SMTP_DEBUG_HTTP', false);
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_QUERIES')) {
-    define('BOOLEAN_SMTP_DEBUG_QUERIES', false);
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_REQUEST')) {
-    define('BOOLEAN_SMTP_DEBUG_REQUEST', false);
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_MAILER')) {
-    define('BOOLEAN_SMTP_DEBUG_MAILER', false);
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_REDACT')) {
-    define('BOOLEAN_SMTP_DEBUG_REDACT', false);
-}
-// Optional: `show` | `mask` | `full` for the REQUEST PAYLOAD block in requests.log only. Empty = follow the
-// global secret visibility (`mask` unless BOOLEAN_SMTP_DEBUG_SECRET_VISIBILITY says otherwise).
-// Filter: `boolean_smtp_debug_request_secret_visibility`.
-if (!defined('BOOLEAN_SMTP_DEBUG_REQUEST_SECRET_VISIBILITY')) {
-    define('BOOLEAN_SMTP_DEBUG_REQUEST_SECRET_VISIBILITY', '');
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_ATTACH_API_DEBUG')) {
-    define('BOOLEAN_SMTP_DEBUG_ATTACH_API_DEBUG', false);
-}
-if (!defined('BOOLEAN_SMTP_DEBUG_LOG_DIR')) {
-    define('BOOLEAN_SMTP_DEBUG_LOG_DIR', '');
-}
-// When enabled, re-runs safe read-only queries at shutdown to log row samples alongside the query log.
-if (!defined('BOOLEAN_SMTP_DEBUG_QUERY_INCLUDE_RESULTS')) {
-    define('BOOLEAN_SMTP_DEBUG_QUERY_INCLUDE_RESULTS', false);
-}
-
 $boolean_smtp_autoload = __DIR__ . '/vendor/autoload.php';
 
 if (!function_exists('boolean_smtp_log_bootstrap')) {
@@ -227,15 +188,13 @@ if (!is_readable($boolean_smtp_vendor_helpers)) {
 
 require_once $boolean_smtp_autoload;
 
-\BooleanSmtp\Support\Debug\WordPressDebugLogger::bootstrap(BOOLEAN_SMTP_PATH);
-
 $plugin = new BooleanSmtp\Plugin($boolean_smtp_plugin_file);
 
 if (!function_exists('boolean_smtp')) {
     /**
      * Get the BooleanSMTP plugin instance.
      *
-     * The single global entry point for the Pro add-on and third-party code:
+     * The single global entry point for other plugins and site code:
      * `boolean_smtp()->app()` is the plugin's service container.
      *
      * @since 1.0.0

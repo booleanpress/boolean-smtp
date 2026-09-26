@@ -1,17 +1,15 @@
-import { Link } from 'react-router';
 import { Download } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { useProCapability } from '@/hooks/useProCapability';
 import { useTranslations } from '@/hooks/useTranslations';
 
 /**
  * The keep-or-replace question for every imported connection whose sender the site already
  * uses. "Keep" is preselected; "Replace" overwrites the site's connection in place and cannot be
- * undone, so a warning appears as soon as one row is set to replace — with a link to the Pro
- * Import & Export tool, to download a settings export first, when the add-on is licensed.
+ * undone, so a warning appears as soon as one row is set to replace — with a button to download a
+ * settings export first, when the screen offers one.
  *
  * @since 1.0.0
  *
@@ -20,11 +18,10 @@ import { useTranslations } from '@/hooks/useTranslations';
  * @param {Record<string, 'keep'|'replace'>} props.value Answer per conflict key.
  * @param {(key: string, answer: 'keep'|'replace') => void} props.onChange
  * @param {() => void} [props.onDownloadExport] Downloads a settings export in place; given, the
- *        warning offers it as a button instead of the link to the Import & Export tool.
+ *        warning offers it as a button.
  */
 export default function SenderConflictChoices({ conflicts, value, onChange, onDownloadExport }) {
     const { t } = useTranslations();
-    const { isProLicensed } = useProCapability();
 
     if (!conflicts || conflicts.length === 0) {
         return null;
@@ -43,12 +40,6 @@ export default function SenderConflictChoices({ conflicts, value, onChange, onDo
                                 <Download />
                                 {t('migration.download_export_first', 'Download a settings export first')}
                             </Button>
-                        </AlertDescription>
-                    ) : isProLicensed ? (
-                        <AlertDescription>
-                            <Link to="/tools/import-export" className="font-medium underline underline-offset-4">
-                                {t('migration.download_export_first', 'Download a settings export first')}
-                            </Link>
                         </AlertDescription>
                     ) : null}
                 </Alert>
@@ -82,11 +73,6 @@ export default function SenderConflictChoices({ conflicts, value, onChange, onDo
                         </RadioGroup>
                         {conflict.replaceAllowed === false && conflict.reason ? (
                             <p className="text-xs text-muted-foreground">{conflict.reason}</p>
-                        ) : null}
-                        {!isProLicensed ? (
-                            <p className="text-xs text-muted-foreground">
-                                {t('migration.conflict_pro', '(With BooleanSMTP Pro, both can be kept and used together.)')}
-                            </p>
                         ) : null}
                     </div>
                 );

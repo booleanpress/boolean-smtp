@@ -1,10 +1,11 @@
 import { Suspense, lazy } from 'react';
-import { Routes, Route, Navigate } from 'react-router';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import Layout from './components/Layout';
 import OnboardingQueryRedirect from './components/OnboardingQueryRedirect';
+import RouteErrorBoundary from './components/RouteErrorBoundary';
 import { Toaster } from '@/components/ui/sonner';
 import { Spinner } from '@/components/ui/spinner';
-import { useProExtensions } from './hooks/useProExtensions';
+import { useExtensions } from './hooks/useExtensions';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
@@ -26,29 +27,29 @@ const PageLoader = () => (
     </div>
 );
 
-// One lazy component per Pro loader, created once. `lazy()` returns a new component *type* on every
-// call, so creating it inside render would unmount the whole Pro page and re-show the fallback each
-// time App re-renders (Pro registration, HMR updates, any parent state change).
-const proRouteComponents = new WeakMap();
+// One lazy component per extension loader, created once. `lazy()` returns a new component *type* on
+// every call, so creating it inside render would unmount the whole extension page and re-show the
+// fallback each time App re-renders (a registration, HMR updates, any parent state change).
+const extensionRouteComponents = new WeakMap();
 
 /**
- * Resolve (and cache) the lazy component for a Pro-registered route loader.
+ * Resolve (and cache) the lazy component for a route loader another plugin registered.
  *
  * @since 1.0.0
  * @param {() => Promise<{ default: import('react').ComponentType }>} loader
  * @returns {import('react').LazyExoticComponent<import('react').ComponentType>}
  */
-function lazyProComponent(loader) {
-    let Component = proRouteComponents.get(loader);
+function lazyExtensionComponent(loader) {
+    let Component = extensionRouteComponents.get(loader);
     if (!Component) {
         Component = lazy(loader);
-        proRouteComponents.set(loader, Component);
+        extensionRouteComponents.set(loader, Component);
     }
     return Component;
 }
 
-function ProRoute({ loader }) {
-    const Component = lazyProComponent(loader);
+function ExtensionRoute({ loader }) {
+    const Component = lazyExtensionComponent(loader);
     return (
         <Suspense fallback={<PageLoader />}>
             <Component />
@@ -57,37 +58,41 @@ function ProRoute({ loader }) {
 }
 
 export default function App() {
-    const { proRoutes } = useProExtensions();
+    const { routes: extensionRoutes } = useExtensions();
+    const location = useLocation();
 
     return (
         <>
             <Layout>
                 <OnboardingQueryRedirect />
-                <Suspense fallback={<PageLoader />}>
-                    <Routes>
-                        <Route path="/" element={<Dashboard />} />
-                        <Route path="/about" element={<About />} />
-                        <Route path="/connections" element={<Connections />} />
-                        <Route path="/connections/new" element={<ConnectionNew />} />
-                        <Route path="/connections/:id" element={<ConnectionEdit />} />
-                        <Route path="/logs" element={<EmailLogs />} />
-                        <Route path="/logs/:id" element={<EmailLogDetail />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="/settings/notifications" element={<Notifications />} />
-                        <Route path="/tools/test" element={<TestEmail />} />
-                        <Route path="/tools/migration" element={<MigrationWizard />} />
-                        <Route path="/onboard" element={<OnboardingWizard />} />
-                        <Route path="/setup" element={<Navigate to="/onboard" replace />} />
-                        {proRoutes.map(r => (
-                            <Route
-                                key={r.path}
-                                path={r.path}
-                                element={<ProRoute loader={r.component} />}
-                            />
-                        ))}
-                        <Route path="*" element={<NotFound />} />
-                    </Routes>
-                </Suspense>
+                {/* A screen that fails to load or render never blanks the app; another screen clears it. */}
+                <RouteErrorBoundary resetKey={location.pathname}>
+                    <Suspense fallback={<PageLoader />}>
+                        <Routes>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/about" element={<About />} />
+                            <Route path="/connections" element={<Connections />} />
+                            <Route path="/connections/new" element={<ConnectionNew />} />
+                            <Route path="/connections/:id" element={<ConnectionEdit />} />
+                            <Route path="/logs" element={<EmailLogs />} />
+                            <Route path="/logs/:id" element={<EmailLogDetail />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="/settings/notifications" element={<Notifications />} />
+                            <Route path="/tools/test" element={<TestEmail />} />
+                            <Route path="/tools/migration" element={<MigrationWizard />} />
+                            <Route path="/onboard" element={<OnboardingWizard />} />
+                            <Route path="/setup" element={<Navigate to="/onboard" replace />} />
+                            {extensionRoutes.map(r => (
+                                <Route
+                                    key={r.path}
+                                    path={r.path}
+                                    element={<ExtensionRoute loader={r.component} />}
+                                />
+                            ))}
+                            <Route path="*" element={<NotFound />} />
+                        </Routes>
+                    </Suspense>
+                </RouteErrorBoundary>
             </Layout>
             {/* Offset below the WP admin bar (32px desktop / 46px mobile) using WP core's own CSS variable. */}
             <Toaster

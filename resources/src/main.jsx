@@ -16,7 +16,7 @@ import './index.css';
 
 const { createRoot } = ReactDOMClient;
 
-// Named subsets keep the host bundle tree-shaken; these are the guaranteed exports for Pro.
+// Named subsets keep the host bundle tree-shaken; these are the guaranteed exports for extensions.
 const ReactRouter = { HashRouter, Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams };
 const Sonner = { Toaster, toast };
 const Theme = { ThemeProvider, useTheme };
@@ -44,14 +44,14 @@ if (container && typeof window !== 'undefined') {
     document.documentElement.setAttribute('lang', String(window.BooleanSmtpAdmin?.locale || 'en'));
 }
 
-// Extension registry -- set up BEFORE React renders so the Pro bundle (loaded
-// after this script via wp_enqueue_script dependency) can register routes
+// Extension registry -- set up BEFORE React renders so another plugin's bundle (loaded
+// after this script via a wp_enqueue_script dependency) can register routes
 // and widgets synchronously before React's first paint.
 // New array references on mutation so useSyncExternalStore detects changes.
 const _ext = { routes: [], widgets: [], settingsPanels: [], connectionPanels: [], listeners: new Set() };
 
 window.BooleanSmtpApp = {
-    // Single shared runtime (see resources/vite/host-runtime.js). The Pro bundle
+    // Single shared runtime (see resources/vite/host-runtime.js). An extension bundle
     // externalises these module ids to this object so both bundles share ONE
     // React instance and ONE set of Radix/Sonner/Router/Theme contexts.
     runtime: {

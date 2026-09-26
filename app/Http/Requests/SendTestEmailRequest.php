@@ -28,11 +28,12 @@ final class SendTestEmailRequest extends FormRequest {
      */
     public function rules(): array {
         return [
-            'to'            => 'required|email',
-            'subject'       => 'nullable|string|max:255',
-            'html'          => 'nullable|boolean',
-            'multipart'     => 'nullable|boolean',
-            'connection_id' => 'nullable|integer|min:1',
+            'to'               => 'required|email',
+            'subject'          => 'nullable|string|max:255',
+            'html'             => 'nullable|boolean',
+            'multipart'        => 'nullable|boolean',
+            'connection_id'    => 'nullable|integer|min:1',
+            'onboarding_draft' => 'nullable|boolean',
         ];
     }
 }

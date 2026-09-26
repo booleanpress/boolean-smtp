@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { SectionCard } from '@/components/section-card';
 import SettingsSkeleton from '../components/skeletons/SettingsSkeleton';
 import { useTranslations } from '../hooks/useTranslations';
-import { useProExtensions } from '../hooks/useProExtensions';
+import { useExtensions } from '../hooks/useExtensions';
 
 /**
  * Whether the Sender Identity card is shown.
@@ -101,7 +101,7 @@ function SettingsExtensionPanel({ panel }) {
 
 export default function Settings() {
     const { t } = useTranslations();
-    const { settingsPanels } = useProExtensions();
+    const { settingsPanels } = useExtensions();
     const [settings, setSettings] = useState({});
     const [savedSettings, setSavedSettings] = useState({});
     const [connections, setConnections] = useState([]);

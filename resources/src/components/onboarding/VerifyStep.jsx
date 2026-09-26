@@ -10,9 +10,7 @@ import PreviewCard from './PreviewCard';
 import StepShell from './StepShell';
 
 /**
- * Step 4 — Verify: the connection check (run on entry) and a test email to an inbox the user can
- * open. "Accepted" is stated as what it is; nothing here blocks Continue except an unsent test,
- * and "Skip for now" lifts even that.
+ * Step 4 — Verify: optional, user-initiated connection and inbox checks before review.
  *
  * @since 1.0.0
  *
@@ -28,8 +26,6 @@ import StepShell from './StepShell';
  * @param {(value: string) => void} props.onRecipientChange
  * @param {() => void} props.onSendTest
  * @param {() => void} props.onBack Also the "Fix in Connect" action.
- * @param {() => void} props.onSkip
- * @param {boolean} props.skipBusy
  * @param {() => void} props.onContinue
  * @param {boolean} props.continueBusy
  * @param {{ stepNumber: number, stepCount: number, stepName: string }} props.shell
@@ -46,8 +42,6 @@ export default function VerifyStep({
     onRecipientChange,
     onSendTest,
     onBack,
-    onSkip,
-    skipBusy,
     onContinue,
     continueBusy,
     shell,
@@ -75,18 +69,12 @@ export default function VerifyStep({
     return (
         <StepShell
             {...shell}
-            title={t('onboarding.verify_title', 'Send yourself a test')}
-            description={t('onboarding.verify_desc', 'First the connection is checked, then a test message goes to an inbox you can open.')}
+            title={t('onboarding.verify_title', 'Check delivery (optional)')}
+            description={t('onboarding.verify_desc', 'You can check the connection or send a test now, or finish setup and test later.')}
             onBack={onBack}
             onContinue={onContinue}
-            continueDisabled={test.status !== 'accepted'}
+            continueLabel={t('onboarding.verify_continue', 'Continue to review')}
             continueBusy={continueBusy}
-            secondaryAction={(
-                <Button type="button" variant="link" size="sm" onClick={onSkip} disabled={skipBusy || continueBusy}>
-                    {skipBusy && <Spinner />}
-                    {t('onboarding.verify_skip', 'Skip for now')}
-                </Button>
-            )}
             preview={(
                 <PreviewCard
                     heading={t('onboarding.verify_preview_heading', 'Verification')}
@@ -110,6 +98,12 @@ export default function VerifyStep({
                 </CardHeader>
                 {hasProbe && (
                     <CardContent className="flex flex-col gap-3" aria-live="polite">
+                        {probe.status === 'idle' && (
+                            <Button type="button" variant="outline" size="sm" className="self-start" onClick={onRunProbe}>
+                                <RefreshCw />
+                                {t('onboarding.verify_run_check', 'Check connection')}
+                            </Button>
+                        )}
                         {probe.status === 'running' && (
                             <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Spinner className="size-4" />

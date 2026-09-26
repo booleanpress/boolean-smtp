@@ -15,8 +15,8 @@ use BooleanSmtp\Contracts\TransportContract;
 
 /**
  * Sends mail through Microsoft Outlook / Office 365 using delegated OAuth via the Microsoft Graph
- * API. The free plugin supports a single delivery mode, `api`; add-ons may register further
- * delivery modes (such as a hosted OAuth proxy or an application-permission mode) through the
+ * API. The transport supports a single delivery mode, `api`; another plugin may register further
+ * delivery modes through the
  * `boolean_smtp_outlook_*` filters below, the same pattern `GoogleTransport` uses for its
  * `boolean_smtp_google_*` filters.
  *
@@ -74,7 +74,7 @@ class OutlookTransport implements TransportContract {
     /**
      * Configure PHPMailer for this transport.
      *
-     * Every Outlook delivery mode (API, and any add-on-provided mode) sends over the Microsoft
+     * Every Outlook delivery mode (API, and any mode another plugin provides) sends over the Microsoft
      * Graph HTTPS API through the dedicated Graph mail sender, never PHPMailer's own SMTP
      * transport, so there is nothing to configure on `$phpmailer`.
      *
@@ -84,7 +84,7 @@ class OutlookTransport implements TransportContract {
      * @param array<string, mixed>           $settings  Decrypted connection settings; see {@see self::getSettingsSchema()}.
      */
     public function configure(\PHPMailer\PHPMailer\PHPMailer $phpmailer, array $settings): void {
-        // Every Outlook delivery mode (API, One Click, Application Permission) sends over
+        // Every Outlook delivery mode sends over
         // Microsoft Graph HTTPS via MicrosoftGraphMailSender, never PHPMailer's own SMTP
         // transport -- nothing to configure on $phpmailer.
     }
@@ -101,16 +101,16 @@ class OutlookTransport implements TransportContract {
         $mode = (string) ($settings['delivery_mode'] ?? 'api');
 
         if ($mode !== 'api') {
-            // Any add-on-provided delivery mode is validated entirely by whichever add-on
-            // registered it via the boolean_smtp_outlook_delivery_modes filter, reached through
-            // this same filter dispatch. An unrecognized mode string (no add-on installed)
+            // A delivery mode another plugin provides is validated entirely by the plugin that
+            // registered it through the boolean_smtp_outlook_delivery_modes filter, reached through
+            // this same filter dispatch. An unrecognized mode string (nothing handles it)
             // validates as "no errors" -- the same fail-open-on-schema/fail-closed-on-send
             // pattern GoogleTransport uses; the Graph mail sender is what actually refuses to send.
             /**
-             * Filters validation errors for an Outlook connection using a delivery mode not
-             * implemented by the free transport.
+             * Filters validation errors for an Outlook connection using a delivery mode the
+             * transport does not implement itself.
              *
-             * Fires only when the delivery mode is not `api` (a mode registered by an add-on
+             * Fires only when the delivery mode is not `api` (a mode another plugin registered
              * through the `boolean_smtp_outlook_delivery_modes` filter). Return the validation
              * errors for that mode, keyed by field name.
              *
@@ -240,9 +240,8 @@ class OutlookTransport implements TransportContract {
         /**
          * Filters the Outlook connection settings schema before it is returned to the admin UI.
          *
-         * Allows an add-on to extend the schema with fields for an additional delivery mode (for
-         * example, a hosted OAuth proxy or an application-permission mode). Return the schema,
-         * keyed by field name.
+         * Allows another plugin to extend the schema with fields for an additional delivery mode.
+         * Return the schema, keyed by field name.
          *
          * @since 1.0.0
          *
@@ -263,7 +262,7 @@ class OutlookTransport implements TransportContract {
         /**
          * Filters the delivery modes available for the Outlook transport.
          *
-         * Return the delivery modes, adding an entry for any mode an add-on registers.
+         * Return the delivery modes, adding an entry for any mode another plugin registers.
          *
          * @since 1.0.0
          *
@@ -307,7 +306,7 @@ class OutlookTransport implements TransportContract {
         /**
          * Filters the validation rules for Outlook connection settings.
          *
-         * Return the rules, adding entries for any fields an add-on introduces.
+         * Return the rules, adding entries for any fields another plugin introduces.
          *
          * @since 1.0.0
          *

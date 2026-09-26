@@ -20,7 +20,7 @@ namespace BooleanSmtp\Support;
  * of the request (one preload query for all of them); keys not listed there are passed
  * straight through to the underlying settings repository, which remembers absent keys.
  *
- * An add-on keeps its own settings by extending this class with its own {@see $prefix}
+ * Another plugin keeps its own settings by extending this class with its own {@see $prefix}
  * and {@see $defaults} and a store scoped to its own plugin slug.
  *
  * @since 1.0.0
@@ -41,8 +41,7 @@ class Settings {
      * identity overrides the one a connection or a plugin set); `simulation_enabled` (Email
      * Simulation Mode, no real delivery); `show_test_email_console` (show the raw test-email
      * console in the admin UI); `auto_plain_text` (auto-generate a plain-text part); `log_emails`,
-     * `log_mailer_diagnostics`, `log_body` (email logging toggles; the body switch is the add-on's
-     * control); `log_retention_days` (days to keep logs, default 30); `fallback_enabled`,
+     * `log_mailer_diagnostics` (email logging toggles); `log_retention_days` (days to keep logs, default 30); `fallback_enabled`,
      * `default_connection_id`, `fallback_connection_id` (connection routing); `auto_retry` (retry a
      * failed message on the other active connections); `health_check_enabled`,
      * `health_check_interval` (minutes, default 15); `oauth_refresh_enabled`, `oauth_refresh_interval`
@@ -63,7 +62,6 @@ class Settings {
         'auto_plain_text'            => true,
         'log_emails'                 => true,
         'log_mailer_diagnostics'     => false,
-        'log_body'                   => true,
         'log_retention_days'         => 30,
         'fallback_enabled'           => true,
         'default_connection_id'      => null,

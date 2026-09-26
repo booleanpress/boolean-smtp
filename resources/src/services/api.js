@@ -1,3 +1,7 @@
+import { toast } from 'sonner';
+
+import { translate } from '../hooks/useTranslations';
+
 const config = window.BooleanSmtpAdmin || {};
 
 const API_BASE = config.apiBase || '/wp-json/booleansmtp/v1';
@@ -59,6 +63,52 @@ function resolveNonce() {
     );
 }
 
+/**
+ * Ask WordPress for a fresh REST nonce, as its own API client does. A nonce lives 12 to 24 hours, so
+ * a screen left open longer holds a stale one; WordPress hands out a new one only while the user is
+ * still logged in.
+ *
+ * @since 1.0.0
+ * @returns {Promise<string>} The new nonce, or an empty string when WordPress gave none.
+ */
+async function refreshNonce() {
+    const ajaxUrl = typeof window !== 'undefined' ? window.ajaxurl : '';
+    if (!ajaxUrl) {
+        return '';
+    }
+
+    try {
+        const response = await fetch(`${ajaxUrl}?action=rest-nonce`, { credentials: 'same-origin' });
+        const nonce = response.ok ? (await response.text()).trim() : '';
+        if (!/^[a-f0-9]{10}$/i.test(nonce)) {
+            return '';
+        }
+        if (window.BooleanSmtpAdmin) {
+            window.BooleanSmtpAdmin.nonce = nonce;
+        }
+        return nonce;
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Tell the user, once, that WordPress no longer accepts their login, instead of letting each screen
+ * report an empty or failed load. Reloading takes them to WordPress's login page.
+ *
+ * @since 1.0.0
+ */
+function notifySessionEnded() {
+    toast.error(translate('common.session_ended', 'Your WordPress session has ended. Reload the page to log in again.'), {
+        id: 'boolean-smtp-session-ended',
+        duration: Infinity,
+        action: {
+            label: translate('common.reload_page', 'Reload page'),
+            onClick: () => window.location.reload(),
+        },
+    });
+}
+
 async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
     const url = `${API_BASE}/${endpoint}`.replace(/\/+/g, '/').replace(':/', '://');
 
@@ -67,13 +117,16 @@ async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
         ...options.headers,
     };
 
-    if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+    // The caller's options stay untouched, so a retry sends the same JSON body with its content type.
+    let body = options.body;
+    if (body && typeof body === 'object' && !(body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
-        options.body = JSON.stringify(options.body);
+        body = JSON.stringify(body);
     }
 
     const response = await fetch(url, {
         ...options,
+        body,
         headers,
         credentials: 'same-origin',
     });
@@ -102,14 +155,13 @@ async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
     }
 
     if (!response.ok) {
-        // Retry once if nonce is stale/missing and another global source may now be available.
-        if (
-            !retriedOnInvalidNonce &&
-            response.status === 403 &&
-            payload &&
-            payload.code === 'rest_cookie_invalid_nonce'
-        ) {
+        // A rejected login is either a stale nonce (retry once with a fresh one) or an ended session.
+        const loginRejected = response.status === 401 || (response.status === 403 && payload?.code === 'rest_cookie_invalid_nonce');
+        if (loginRejected && !retriedOnInvalidNonce && (await refreshNonce())) {
             return apiFetch(endpoint, options, true);
+        }
+        if (loginRejected) {
+            notifySessionEnded();
         }
 
         const msg =

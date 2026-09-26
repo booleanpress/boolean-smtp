@@ -163,7 +163,7 @@ export default function ConnectionEdit() {
                 onSave={handleSave}
                 onCancel={() => navigate('/connections')}
                 onRemoteSettingsUpdated={refreshConnection}
-                onTest={handleTest}
+                onTest={connection.is_active ? handleTest : undefined}
                 saving={saving}
                 testing={testing}
                 testResult={testResult}

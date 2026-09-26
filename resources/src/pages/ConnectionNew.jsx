@@ -1,27 +1,35 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router';
+import { useEffect, useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { ChevronLeft, Compass, ExternalLink, Star } from 'lucide-react';
 import api, { fieldErrors } from '../services/api';
 import { MAIL_PROVIDERS } from '../config/mailers';
 import ConnectionForm from './ConnectionForm';
 import ConnectionFormSkeleton from '../components/connections/ConnectionFormSkeleton';
 import { GENERAL_DOCS_URL } from '../components/setup-guides/JsonVariantSetupGuide';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
 import { useTranslations } from '../hooks/useTranslations';
 
-// Curated display order for launched providers (SES, Google, Outlook, then Custom SMTP, then
-// PHP); everything else keeps its original config/mailers.jsx order.
-const LAUNCHED_DISPLAY_ORDER = { ses: 0, google: 1, outlook: 2, smtp: 3, php: 4 };
+// Curated display order: Amazon SES, Google, Microsoft, then Custom SMTP and PHP mail.
+const DISPLAY_ORDER = { ses: 0, google: 1, outlook: 2, smtp: 3, php: 4 };
 
+/**
+ * Select a mailer and keep its new-connection form addressable by URL.
+ *
+ * @since 1.0.0
+ */
 export default function ConnectionNew() {
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { t } = useTranslations();
-    const [selectedDriver, setSelectedDriver] = useState(null);
-    const [transportMetadata, setTransportMetadata] = useState(null);
-    const [loadingMetadata, setLoadingMetadata] = useState(false);
+    const requestedDriver = searchParams.get('provider');
+    const hasProviderParam = searchParams.has('provider');
+    const selectedDriver = MAIL_PROVIDERS.some(provider => provider.driver === requestedDriver)
+        ? requestedDriver
+        : null;
+    const [transportMetadata, setTransportMetadata] = useState({});
+    const selectedMetadata = selectedDriver ? transportMetadata[selectedDriver] : null;
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [validationErrors, setValidationErrors] = useState({});
@@ -30,38 +38,41 @@ export default function ConnectionNew() {
     const providerName = (provider) => t(`mailers.${provider.driver}.name`, provider.name);
     const providerDescription = (provider) => t(`mailers.${provider.driver}.description`, provider.description);
 
-    // Launched providers lead, recommended ones lead within each group; launched providers then
-    // use LAUNCHED_DISPLAY_ORDER, everything else keeps its original order (Array#sort is stable).
     const sortedProviders = useMemo(() => {
-        return [...MAIL_PROVIDERS].sort((a, b) => {
-            if (a.launched !== b.launched) return a.launched ? -1 : 1;
-            if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
-            if (a.launched) return (LAUNCHED_DISPLAY_ORDER[a.driver] ?? 99) - (LAUNCHED_DISPLAY_ORDER[b.driver] ?? 99);
-            return 0;
-        });
+        return [...MAIL_PROVIDERS].sort((a, b) => (DISPLAY_ORDER[a.driver] ?? 99) - (DISPLAY_ORDER[b.driver] ?? 99));
     }, []);
 
-    async function selectMailer(driver) {
+    useEffect(() => {
+        if (!selectedDriver) {
+            if (hasProviderParam) {
+                setSearchParams({}, { replace: true });
+            }
+            return;
+        }
+        if (selectedMetadata) return;
+
+        let current = true;
+        api.get(`transports/${selectedDriver}`)
+            .then(res => {
+                if (!current) return;
+                setTransportMetadata(previous => ({ ...previous, [selectedDriver]: res.data || res }));
+            })
+            .catch(err => {
+                if (!current) return;
+                setError(t('connection_new.transport_metadata_failed', 'Failed to load transport metadata: {{message}}', {
+                    message: err.message,
+                }));
+                setSearchParams({}, { replace: true });
+            });
+
+        return () => { current = false; };
+    }, [hasProviderParam, selectedDriver, selectedMetadata, setSearchParams, t]);
+
+    function selectMailer(driver) {
         setError('');
         setValidationErrors({});
         setSenderConflict(null);
-        setLoadingMetadata(true);
-        setTransportMetadata(null);
-        try {
-            const res = await api.get(`transports/${driver}`);
-            setTransportMetadata(res.data || res);
-            // Only mount ConnectionForm once we have metadata, to avoid duplicate
-            // `transports/${driver}` fetches during the intermediate render.
-            setSelectedDriver(driver);
-        } catch (err) {
-            setError(t('connection_new.transport_metadata_failed', 'Failed to load transport metadata: {{message}}', {
-                message: err.message,
-            }));
-            setTransportMetadata(null);
-            setSelectedDriver(null);
-        } finally {
-            setLoadingMetadata(false);
-        }
+        setSearchParams({ provider: driver });
     }
 
     async function handleSave(formData) {
@@ -80,7 +91,7 @@ export default function ConnectionNew() {
                     name: formData.name,
                     driver: selectedDriver,
                     settings: formData.settings,
-                    is_active: formData.is_active || true,
+                    is_active: formData.is_active ?? true,
                     priority: formData.priority || 0,
                 });
                 navigate('/connections');
@@ -89,7 +100,7 @@ export default function ConnectionNew() {
                     name: formData.name,
                     driver: selectedDriver,
                     settings: formData.settings,
-                    is_active: formData.is_active || true,
+                    is_active: formData.is_active ?? true,
                     priority: formData.priority || 0,
                 });
                 navigate('/connections');
@@ -108,12 +119,10 @@ export default function ConnectionNew() {
     }
 
     if (!selectedDriver) {
-        if (loadingMetadata) {
-            return <ConnectionFormSkeleton />;
-        }
-        const backLabel = t('connection_new.back_to_connections', 'Back to Connections');
+        const backLabel = t('connection_new.back_to_mailers', 'Back to Mailers');
         return (
             <div className="space-y-8">
+                {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
                 <div className="flex items-start gap-3">
                     <Button
                         variant="ghost"
@@ -136,59 +145,35 @@ export default function ConnectionNew() {
                 </div>
 
                 <section className="space-y-4">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                         {sortedProviders.map(m => (
                             <Button
                                 key={m.driver}
                                 variant="outline"
                                 onClick={() => selectMailer(m.driver)}
-                                disabled={!m.launched}
                                 title={providerDescription(m)}
-                                className={cn(
-                                    'group relative h-auto flex-col items-stretch gap-0 overflow-hidden p-0 text-left whitespace-normal shadow-none transition-colors disabled:opacity-100',
-                                    m.launched
-                                        ? 'border-foreground/20 bg-card hover:border-primary hover:bg-card'
-                                        : 'border-dashed'
-                                )}
+                                className="group relative h-auto flex-col items-stretch gap-0 overflow-hidden border-foreground/20 bg-card p-0 text-left whitespace-normal shadow-none transition-colors hover:border-primary hover:bg-card"
                             >
-                                {(m.recommended || !m.launched) && (
-                                    <div className="absolute top-1.5 left-1.5 z-10 flex flex-col items-start gap-1">
-                                        {m.recommended && (
-                                            <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-background/90 text-primary shadow-xs backdrop-blur-sm">
-                                                <Star className="size-3 fill-current" aria-hidden="true" />
-                                                <span className="sr-only">{t('connection_new.recommended', 'Recommended')}</span>
-                                            </span>
-                                        )}
-                                        {!m.launched && (
-                                            <Badge
-                                                variant="outline"
-                                                className="border-border/70 bg-background/85 px-1 py-0 leading-none font-normal text-muted-foreground backdrop-blur-sm"
-                                            >
-                                                {t('connection_new.coming_soon_short', 'Soon')}
-                                            </Badge>
-                                        )}
+                                {m.recommended && (
+                                    <div className="absolute top-1.5 left-1.5 z-10">
+                                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-background/90 text-primary shadow-xs backdrop-blur-sm">
+                                            <Star className="size-3 fill-current" aria-hidden="true" />
+                                            <span className="sr-only">{t('connection_new.recommended', 'Recommended')}</span>
+                                        </span>
                                     </div>
                                 )}
-                                <div className={cn(
-                                    'relative mx-auto flex aspect-[2/1] w-full items-center justify-center overflow-hidden bg-muted p-2.5',
-                                    m.launched && 'bg-card'
-                                )}>
+                                <div className="relative mx-auto flex aspect-[2/1] w-full items-center justify-center overflow-hidden bg-card p-2.5">
                                     {m.logo ? (
                                         <img src={m.logo} alt={providerName(m)} className="size-full object-contain" />
                                     ) : (
                                         m.icon
-                                    )}
-                                    {!m.launched && (
-                                        <div className="absolute inset-0 bg-muted/65 backdrop-grayscale" aria-hidden="true" />
                                     )}
                                 </div>
                                 <Separator />
                                 <div className="p-2 text-center">
                                     <span className="text-xs font-semibold tracking-tight">{providerName(m)}</span>
                                 </div>
-                                {m.launched && (
-                                    <span className="absolute right-1.5 bottom-1.5 size-1.5 rounded-full bg-border transition-colors group-hover:bg-primary" aria-hidden="true" />
-                                )}
+                                <span className="absolute right-1.5 bottom-1.5 size-1.5 rounded-full bg-border transition-colors group-hover:bg-primary" aria-hidden="true" />
                             </Button>
                         ))}
                     </div>
@@ -213,15 +198,18 @@ export default function ConnectionNew() {
         );
     }
 
+    if (!selectedMetadata) {
+        return <ConnectionFormSkeleton />;
+    }
+
     return (
         <ConnectionForm
+            key={selectedDriver}
             driver={selectedDriver}
-            metadata={transportMetadata}
-            loading={loadingMetadata}
+            metadata={selectedMetadata}
             onSave={handleSave}
             onCancel={() => {
-                setSelectedDriver(null);
-                setTransportMetadata(null);
+                setSearchParams({}, { replace: true });
             }}
             saving={saving}
             error={error}

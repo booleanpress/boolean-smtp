@@ -27,7 +27,7 @@ const ALERT_CHANNELS_WITH_DOCS = ['slack', 'discord', 'telegram'];
  *
  * @since 1.0.0
  *
- * @param {string} driver Driver slug from the transport registry (`ses`, `google`, `sendgrid`, …).
+ * @param {string} driver Driver slug from the transport registry (`ses`, `google`, `smtp`, …).
  * @returns {string}
  */
 export function mailerDocsUrl(driver) {

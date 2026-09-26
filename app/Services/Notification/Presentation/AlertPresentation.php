@@ -381,7 +381,6 @@ final class AlertPresentation {
         return match ($kind) {
             'delivery_failure'      => self::translate('Email Delivery Failure', $translator),
             'connection_failure'    => self::translate('Connection Failure', $translator),
-            'connection_unhealthy'  => self::translate('Connection Unhealthy', $translator),
             'oauth_refresh_failure' => self::translate('OAuth Refresh Requires Attention', $translator),
             'notification_test'     => self::translate('Notification Channel Test', $translator),
             default                 => (string) ($context['alert_type'] ?? self::translate('BooleanSMTP alert', $translator)),
@@ -402,7 +401,6 @@ final class AlertPresentation {
         return match ($kind) {
             'delivery_failure'      => self::translate('A message could not be delivered after all configured attempts.', $translator),
             'connection_failure'    => self::translate('A mailer connection failed and needs review.', $translator),
-            'connection_unhealthy'  => self::translate('A scheduled health check found a mailer connection unhealthy.', $translator),
             'oauth_refresh_failure' => self::translate('An OAuth connection could not refresh and needs re-authorization.', $translator),
             'notification_test'     => self::translate('This is a test of this BooleanSMTP notification channel.', $translator),
             default                 => $message,
@@ -420,7 +418,7 @@ final class AlertPresentation {
      * @return array{label: string, url: string}
      */
     private static function defaultAction(string $kind, array $context, ?TranslatorContract $translator): array {
-        if (\in_array($kind, ['connection_failure', 'connection_unhealthy', 'oauth_refresh_failure'], true) && !empty($context['connection_id'])) {
+        if (\in_array($kind, ['connection_failure', 'oauth_refresh_failure'], true) && !empty($context['connection_id'])) {
             return [
                 'label' => self::translate('Open connection settings', $translator),
                 'url'   => self::booleanSmtpAdminUrl() . '#/connections/' . (int) $context['connection_id'],

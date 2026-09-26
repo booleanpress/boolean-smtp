@@ -32,7 +32,7 @@ export function providerCopy(t) {
             method: t('onboarding.provider_method_google', 'HTTPS API · OAuth (your own client)'),
             fit: t('onboarding.provider_fit_google', 'Best for a Google Workspace or Gmail mailbox.'),
             needs: [
-                t('onboarding.provider_needs_google_1', 'An OAuth client from Google Cloud (about five minutes — the guide walks you through it)'),
+                t('onboarding.provider_needs_google_1', 'An OAuth client from Google Cloud (the guide walks you through it)'),
                 t('onboarding.provider_needs_google_2', 'Signing in to the mailbox that will send'),
             ],
         },
@@ -61,7 +61,7 @@ export function providerCopy(t) {
 }
 
 /**
- * Step 2 — Provider: the five launched providers as choice cards.
+ * Step 2 — Provider: the five providers as choice cards.
  *
  * @since 1.0.0
  *

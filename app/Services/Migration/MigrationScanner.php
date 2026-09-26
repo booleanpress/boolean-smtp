@@ -14,7 +14,7 @@ use BooleanSmtp\Contracts\EncryptorContract;
 use BooleanSmtp\Core\Foundation\Application;
 use BooleanSmtp\Repositories\ConnectionRepository;
 use BooleanSmtp\Services\Connection\ConnectionHealthProbe;
-use BooleanSmtp\Services\Editions\SenderGuard;
+use BooleanSmtp\Services\Senders\SenderGuard;
 use BooleanSmtp\Services\Migration\Assessment\ConnectionAssessment;
 use BooleanSmtp\Services\Migration\Assessment\ConnectionAssessor;
 use BooleanSmtp\Services\Migration\Logs\LogMapper;

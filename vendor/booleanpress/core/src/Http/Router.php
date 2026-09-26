@@ -462,8 +462,7 @@ class Router {
                 }
             }
 
-            error_log('BooleanPress API Error: ' . $e->getMessage());
-            error_log($e->getTraceAsString());
+            $this->reportWithoutHandler($e);
 
             return $this->convertResponse(
                 JsonResponse::error($e->getMessage() ?: 'Internal Server Error', 500)
@@ -472,39 +471,27 @@ class Router {
     }
 
     /**
+     * Report an exception when no error handler is bound: to the `core` log channel when a site has
+     * switched it on. The response already carries the message, so nothing else is written.
+     *
+     * @since 0.2.11
+     */
+    protected function reportWithoutHandler(\Throwable $e): void {
+        try {
+            $logger = $this->container->make(\BooleanSmtp\Core\Log\Logger::class);
+            if ($logger->isEnabled()) {
+                $logger->error($e->getMessage(), ['exception' => $e]);
+            }
+        } catch (\Throwable) {
+            // intentionally silent: without a logger there is nowhere of the framework's own to report to.
+        }
+    }
+
+    /**
      * Create a Request from WP_REST_Request.
      */
     protected function createRequestFromWpRest(\WP_REST_Request $wpRequest): Request {
-        $request = Request::capture();
-
-        // WordPress has already read php://input into WP_REST_Request; capture() often sees an empty body.
-        // Keep the raw bytes WordPress holds: a provider webhook signs exactly them.
-        $rawBody = (string) $wpRequest->get_body();
-        if ($rawBody !== '' && (string) $request->getContent() === '') {
-            $request->setContent($rawBody);
-        }
-
-        $jsonParams = $wpRequest->get_json_params();
-        if (is_array($jsonParams) && $jsonParams !== []) {
-            $request->setJsonParams($jsonParams);
-        }
-
-        $bodyParams = $wpRequest->get_body_params();
-        if (is_array($bodyParams) && $bodyParams !== []) {
-            $request->mergeRequest($bodyParams);
-        }
-
-        // capture() reads $_GET, which an internal dispatch (rest_do_request(), the core batch
-        // endpoint, WP-CLI) never fills; the query WordPress parsed for this request wins.
-        $queryParams = $wpRequest->get_query_params();
-        if (is_array($queryParams) && $queryParams !== []) {
-            $request->mergeQuery($queryParams);
-        }
-
-        // Set route parameters
-        $request->setRouteParams($wpRequest->get_url_params());
-
-        return $request;
+        return Request::fromWpRest($wpRequest);
     }
 
     /**

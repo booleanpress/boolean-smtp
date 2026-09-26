@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 namespace BooleanSmtp\Services\Queue;
 
-use BooleanSmtp\Contracts\Editions\SenderRouterContract;
+use BooleanSmtp\Services\Senders\SenderRouter;
 use BooleanSmtp\Core\Foundation\Application;
 use BooleanSmtp\Models\Connection;
 use BooleanSmtp\Models\EmailLog;
@@ -97,8 +97,8 @@ class RetryLadder
          *
          * Applies when "Retry on other connections" is on: after the first failed send the queue
          * worker retries the message on the active connections it has not tried yet, one per
-         * attempt, up to this many times. The add-on's "Maximum Attempts" setting is delivered
-         * through this filter. Return `0` to disable retries without turning the setting off.
+         * attempt, up to this many times. Return `0` to disable retries without turning the
+         * setting off.
          *
          * @since 1.0.0
          *
@@ -109,8 +109,7 @@ class RetryLadder
     }
 
     /**
-     * The first active connection the message has not been sent through yet, in the order the
-     * site's sender-routing policy gives (by priority, then id, unless an add-on reorders it).
+     * The first active connection the message has not been sent through yet, by priority, then id.
      *
      * @since 1.0.0
      *
@@ -120,7 +119,7 @@ class RetryLadder
     public function nextConnectionFor(EmailLog $log): ?Connection
     {
         $tried      = $this->triedConnectionIds($log);
-        $candidates = $this->app->make(SenderRouterContract::class)->retryOrder(array_values($this->connections->activeByPriority()->all()), $log);
+        $candidates = $this->app->make(SenderRouter::class)->retryOrder(array_values($this->connections->activeByPriority()->all()), $log);
 
         foreach ($candidates as $connection) {
             if (!in_array((int) $connection->id, $tried, true)) {

@@ -18,10 +18,10 @@ use BooleanSmtp\Services\Migration\Contracts\DestinationInterface;
 use BooleanSmtp\Services\Migration\Contracts\SourceInterface;
 use BooleanSmtp\Services\Migration\Logs\LogMapper;
 use BooleanSmtp\Services\Migration\Logs\LogWindow;
-use BooleanSmtp\Services\Editions\SenderCandidate;
-use BooleanSmtp\Services\Editions\SenderEntries;
-use BooleanSmtp\Services\Editions\SenderEntry;
-use BooleanSmtp\Services\Editions\SenderGuard;
+use BooleanSmtp\Services\Senders\SenderCandidate;
+use BooleanSmtp\Services\Senders\SenderEntries;
+use BooleanSmtp\Services\Senders\SenderEntry;
+use BooleanSmtp\Services\Senders\SenderGuard;
 
 /**
  * Holds the registered sources and runs one of them. A run never writes the source plugin's

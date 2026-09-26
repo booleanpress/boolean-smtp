@@ -24,7 +24,6 @@ import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
-import { useProCapability } from '../hooks/useProCapability';
 import { useTranslations } from '../hooks/useTranslations';
 import { TABLE_HEADER_CLASS } from '@/lib/table';
 
@@ -38,7 +37,6 @@ function formatBytes(bytes) {
 export default function EmailLogDetail() {
     const { id } = useParams();
     const { t } = useTranslations();
-    const { isProLicensed } = useProCapability();
     const [log, setLog] = useState(null);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('preview');
@@ -253,9 +251,7 @@ export default function EmailLogDetail() {
                                     <EmptyMedia variant="icon"><AlertTriangle /></EmptyMedia>
                                     <EmptyTitle>{t('email_log_detail.body_not_available', 'Email body not available')}</EmptyTitle>
                                     <EmptyDescription>
-                                        {isProLicensed
-                                            ? t('email_log_detail.enable_log_body_hint_pro', 'This email predates body logging, or "Store Email Message Body" was turned off in Settings when it was sent.')
-                                            : t('email_log_detail.enable_log_body_hint_free', 'This email predates automatic body logging and cannot be previewed.')}
+                                        {t('email_log_detail.body_not_stored', 'The body of this email was not stored, so it cannot be previewed.')}
                                     </EmptyDescription>
                                 </EmptyHeader>
                             </Empty>

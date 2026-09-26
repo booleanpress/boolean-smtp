@@ -3,8 +3,8 @@
  * Registers the plugin's core service bindings and wires its WordPress integration.
  *
  * The central service provider for the free plugin: container bindings, the public hook
- * catalog, the admin page and asset loading, cron schedules, and the Pro addon extension
- * points all originate here.
+ * catalog, the admin page and asset loading, cron schedules, and the extension points other
+ * plugins build on all originate here.
  *
  * @package BooleanSmtp
  * @since   1.0.0
@@ -19,7 +19,6 @@ use BooleanSmtp\Core\Container\ServiceProvider;
 use BooleanSmtp\Core\Contracts\LoggerContract;
 use BooleanSmtp\Core\Log\LogManager;
 use BooleanSmtp\Core\Hooks\HookRegistry;
-use BooleanSmtp\Contracts\ProCapabilityContract;
 use BooleanSmtp\Contracts\TranslatorContract;
 use BooleanSmtp\Jobs\HealthCheckJob;
 use BooleanSmtp\Jobs\OAuthRefreshJob;
@@ -30,28 +29,25 @@ use BooleanSmtp\Models\EmailLog;
 use BooleanSmtp\Observers\EmailLogObserver;
 use BooleanSmtp\Support\BooleanSmtpWpMail;
 use BooleanSmtp\Support\Hooks\HookCatalog;
-use BooleanSmtp\Support\PluginLoadOrder;
 use BooleanSmtp\Support\Settings;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthRedirectUri;
 use BooleanSmtp\Services\Migration\MigrationScanner;
-use BooleanSmtp\Support\NullProCapability;
 
 /**
- * Boots the free plugin: container bindings, hooks, cron, admin UI, and Pro extension points.
+ * Boots the plugin: container bindings, hooks, cron, admin UI, and extension points.
  *
  * @since 1.0.0
  */
 class AppServiceProvider extends ServiceProvider {
     /**
-     * Script handles printed as ES modules: the admin app, the add-on's app and, while
-     * `pnpm dev` runs, the Vite client.
+     * Script handles printed as ES modules: the admin app and, while `pnpm dev` runs, the Vite
+     * client. Other plugins add theirs through `boolean_smtp_module_script_handles`.
      *
      * @since 1.0.0
      * @var list<string>
      */
     private const MODULE_SCRIPT_HANDLES = [
         'boolean-smtp-app',
-        'boolean-smtp-pro-app',
         'boolean-smtp-vite-client',
     ];
 
@@ -73,6 +69,39 @@ class AppServiceProvider extends ServiceProvider {
     ];
 
     /**
+     * The admin screens that show the warning about another plugin holding `wp_mail()`: the
+     * Dashboard and the Plugins screen, for a single site and for a network.
+     *
+     * @since 1.0.0
+     * @var list<string>
+     */
+    private const TAKEOVER_NOTICE_SCREENS = ['dashboard', 'dashboard-network', 'plugins', 'plugins-network'];
+
+    /**
+     * Style handle carrying the admin bar badge shown while email simulation is on.
+     *
+     * @since 1.0.0
+     * @var string
+     */
+    private const ADMIN_BAR_STYLE_HANDLE = 'boolean-smtp-admin-bar';
+
+    /**
+     * User meta key holding the name of the mail plugin whose takeover warning the user dismissed.
+     *
+     * @since 1.0.0
+     * @var string
+     */
+    public const TAKEOVER_DISMISSED_META = 'boolean_smtp_mail_takeover_dismissed';
+
+    /**
+     * Query argument and nonce action of the takeover warning's Dismiss link.
+     *
+     * @since 1.0.0
+     * @var string
+     */
+    private const TAKEOVER_DISMISS_ACTION = 'boolean_smtp_dismiss_mail_takeover';
+
+    /**
      * Cached translator instance, resolved lazily on first use.
      *
      * @since 1.0.0
@@ -85,9 +114,8 @@ class AppServiceProvider extends ServiceProvider {
      *
      * Binds {@see \BooleanSmtp\Contracts\MailerContract} to `MailerManager`,
      * {@see \BooleanSmtp\Contracts\EncryptorContract} to `AesEncryptor`, a singleton
-     * `ConnectionHealthProbe`, {@see ProCapabilityContract} to {@see NullProCapability} (the
-     * Pro addon overrides this binding when active) and the framework's {@see HookRegistry} to a
-     * lazily filled copy of the generated {@see HookCatalog}.
+     * `ConnectionHealthProbe` and the framework's {@see HookRegistry} to a lazily filled copy of
+     * the generated {@see HookCatalog}.
      *
      * @since 1.0.0
      */
@@ -128,13 +156,6 @@ class AppServiceProvider extends ServiceProvider {
             )
         );
 
-        $this->app->singleton(
-            ProCapabilityContract::class,
-            NullProCapability::class
-        );
-
-        \BooleanSmtp\Services\Editions\EditionPolicies::bind($this->app);
-
         // The hook catalog is generated from the hook docblocks; it only loads when something
         // (the `hooks:list` command) asks the registry for it.
         $this->app->singleton(HookRegistry::class, static function (): HookRegistry {
@@ -155,26 +176,24 @@ class AppServiceProvider extends ServiceProvider {
     }
 
     /**
-     * Wire the plugin's admin UI, hooks, cron schedules, and Pro extension points.
+     * Wire the plugin's admin UI, hooks, cron schedules, and extension points.
      *
      * @since 1.0.0
      */
     public function boot(): void {
         $this->registerAdminPage();
         $this->registerHooks();
-        $this->registerProExtensionPoints();
+        $this->registerExtensionPoints();
         $this->registerObservers();
         $this->registerHealthCheckCron();
         $this->registerCliCommands();
         $this->addAction('admin_init', [$this, 'redirectSlashedAdminPage']);
-        $this->loadOrder()->register();
-        $this->addAction('activated_plugin', [$this, 'keepLoadOrderFirst']);
-        $this->addAction('admin_init', [$this, 'repairLoadOrder']);
         $this->addAction('admin_enqueue_scripts', [$this, 'enqueueAssets']);
         $this->addAction('admin_notices', [$this, 'maybeWpMailTakeoverNotice']);
+        $this->addAction('admin_init', [$this, 'dismissWpMailTakeoverNotice']);
         $this->addAction('all_admin_notices', [$this, 'printNoticeAnchor'], PHP_INT_MAX);
         $this->addAction('admin_bar_menu', [$this, 'registerSimulationAdminBarNotice'], 100);
-        $this->addAction('admin_head', [$this, 'injectSimulationAdminBarCss']);
+        $this->addAction('admin_enqueue_scripts', [$this, 'enqueueSimulationAdminBarStyle']);
     }
 
     /**
@@ -379,7 +398,7 @@ class AppServiceProvider extends ServiceProvider {
         $wp_admin_bar->add_node([
             'id'     => 'boolean-smtp-simulation-active',
             'parent' => 'top-secondary',
-            'title'  => '<span class="ab-label boolean-smtp-simulation-label" style="display:inline-block;background:#b91c1c;color:#fff;padding:0 8px;line-height:32px;height:32px;box-sizing:border-box;font-size:12px;font-weight:600;vertical-align:top;">'
+            'title'  => '<span class="ab-label boolean-smtp-simulation-label">'
             . \esc_html($this->translator()->translate('Email: Disabled'))
             . '</span>',
             'href'   => \admin_url('admin.php?page=boolean-smtp#/settings'),
@@ -390,33 +409,49 @@ class AppServiceProvider extends ServiceProvider {
     }
 
     /**
-     * Print inline CSS that removes the default admin bar item padding for the simulation
-     * notice so its colored badge sits flush against the admin bar.
+     * Enqueue the styles of the admin bar's "Email: Disabled" badge while email simulation is on.
+     *
+     * The rules are attached to a registered style handle with `wp_add_inline_style()`, so
+     * WordPress prints them with the page's other styles, and only on the admin screens where the
+     * badge is shown: for users who can manage options, while the admin bar is showing and the
+     * `simulation_enabled` setting is on.
      *
      * @since 1.0.0
+     *
+     * @return void
      */
-    public function injectSimulationAdminBarCss(): void {
-        try {
-            $settings = $this->app->make(Settings::class);
-            if (!$settings->get('simulation_enabled')) {
-                return;
-            }
-        } catch (\Throwable) {
+    public function enqueueSimulationAdminBarStyle(): void {
+        if (!\current_user_can('manage_options') || !\is_admin_bar_showing()) {
             return;
         }
 
-        echo '<style id="boolean-smtp-simulation-css">
-            #wp-admin-bar-boolean-smtp-simulation-active .ab-item { padding: 0 !important; }
-        </style>';
+        try {
+            if (!$this->app->make(Settings::class)->get('simulation_enabled')) {
+                return;
+            }
+        } catch (\Throwable) {
+            // intentionally silent: without readable settings the badge is not shown either.
+            return;
+        }
+
+        \wp_register_style(self::ADMIN_BAR_STYLE_HANDLE, false, ['admin-bar'], BOOLEAN_SMTP_VERSION);
+        \wp_enqueue_style(self::ADMIN_BAR_STYLE_HANDLE);
+        \wp_add_inline_style(
+            self::ADMIN_BAR_STYLE_HANDLE,
+            '#wp-admin-bar-boolean-smtp-simulation-active .ab-item{padding:0!important}'
+            . '#wpadminbar .boolean-smtp-simulation-label{display:inline-block;background:#b91c1c;color:#fff;padding:0 8px;'
+            . 'line-height:32px;height:32px;box-sizing:border-box;font-size:12px;font-weight:600;vertical-align:top}'
+        );
     }
 
     /**
      * Show an admin notice when another plugin took `wp_mail()` before BooleanSMTP could.
      *
-     * Suppressed once the `BOOLEAN_SMTP_WP_MAIL_TAKEOVER` constant is defined and truthy,
-     * which the plugin sets once it confirms it registered `wp_mail()` successfully, and on the
-     * plugin's own screens, where the admin UI shows the same warning in its own layout instead
-     * of WordPress dropping it over the app's header.
+     * Shown to administrators on the Dashboard and the Plugins screen only; the plugin's own
+     * screens show the same warning inside the admin app. A user who dismisses it does not see it
+     * again until a different plugin takes `wp_mail()`. Nothing is shown once the
+     * `BOOLEAN_SMTP_WP_MAIL_TAKEOVER` constant is defined and truthy, which the plugin sets when
+     * it registered `wp_mail()` itself.
      *
      * @since 1.0.0
      */
@@ -427,13 +462,88 @@ class AppServiceProvider extends ServiceProvider {
         if (!\function_exists('current_user_can') || !\current_user_can('manage_options')) {
             return;
         }
-        if (BooleanSmtpWpMail::isTakeoverActive() || $this->isPluginScreen()) {
+        if (BooleanSmtpWpMail::isTakeoverActive() || !$this->isTakeoverNoticeScreen()) {
+            return;
+        }
+        $holder = $this->takeoverHolder();
+        if ((string) \get_user_meta(\get_current_user_id(), self::TAKEOVER_DISMISSED_META, true) === $holder) {
             return;
         }
 
+        $dismissUrl = \wp_nonce_url(\add_query_arg(self::TAKEOVER_DISMISS_ACTION, '1'), self::TAKEOVER_DISMISS_ACTION);
+
         echo '<div class="notice notice-warning"><p><strong>BooleanSMTP:</strong> ';
         echo \esc_html($this->wpMailTakeoverMessage());
+        echo ' <a href="' . \esc_url($dismissUrl) . '">' . \esc_html($this->translator()->translate('Dismiss')) . '</a>';
         echo '</p></div>';
+    }
+
+    /**
+     * Remember that the current user dismissed the takeover warning for the plugin that holds
+     * `wp_mail()` now, then return to the screen without the Dismiss arguments.
+     *
+     * Runs on `admin_init`; does nothing unless the request carries the Dismiss link's argument
+     * and a valid nonce for it.
+     *
+     * @since 1.0.0
+     *
+     * @return void
+     */
+    public function dismissWpMailTakeoverNotice(): void {
+        if (!$this->recordTakeoverDismissal()) {
+            return;
+        }
+
+        \wp_safe_redirect(\remove_query_arg([self::TAKEOVER_DISMISS_ACTION, '_wpnonce']));
+        exit;
+    }
+
+    /**
+     * Store the current user's dismissal of the takeover warning when this request is the
+     * Dismiss link, from an administrator, with a valid nonce.
+     *
+     * @since 1.0.0
+     *
+     * @return bool True when a dismissal was recorded.
+     */
+    private function recordTakeoverDismissal(): bool {
+        if (!isset($_GET[self::TAKEOVER_DISMISS_ACTION])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- presence check only; the nonce is verified below before anything changes.
+            return false;
+        }
+        if (!\current_user_can('manage_options')) {
+            return false;
+        }
+        \check_admin_referer(self::TAKEOVER_DISMISS_ACTION);
+
+        \update_user_meta(\get_current_user_id(), self::TAKEOVER_DISMISSED_META, $this->takeoverHolder());
+
+        return true;
+    }
+
+    /**
+     * Whether the screen being rendered is one where the takeover warning belongs.
+     *
+     * @since 1.0.0
+     *
+     * @return bool
+     */
+    private function isTakeoverNoticeScreen(): bool {
+        $screen = \function_exists('get_current_screen') ? \get_current_screen() : null;
+
+        return \is_object($screen) && \in_array((string) ($screen->id ?? ''), self::TAKEOVER_NOTICE_SCREENS, true);
+    }
+
+    /**
+     * The key a dismissal is recorded against: the name of the plugin holding `wp_mail()`, behind
+     * a fixed prefix so the key is never empty — `get_user_meta()` returns an empty string when
+     * nothing was stored, which must not read as "dismissed" when the holder cannot be named.
+     *
+     * @since 1.0.0
+     *
+     * @return string
+     */
+    private function takeoverHolder(): string {
+        return 'holder:' . (BooleanSmtpWpMail::takenOverBy() ?? '');
     }
 
     /**
@@ -484,46 +594,6 @@ class AppServiceProvider extends ServiceProvider {
         return $plugin !== null
             ? $this->translator()->translate('{{plugin}} claimed WordPress mail first — until it is deactivated, your site\'s email bypasses the email log and failure alerts.', ['plugin' => $plugin])
             : $this->translator()->translate('Another plugin claimed WordPress mail first — until it is deactivated, your site\'s email bypasses the email log and failure alerts.');
-    }
-
-    /**
-     * Move the plugin back to the front of the load order after any plugin is activated.
-     *
-     * @since 1.0.0
-     *
-     * @return void
-     */
-    public function keepLoadOrderFirst(): void {
-        $this->loadOrder()->ensureFirst();
-    }
-
-    /**
-     * On an admin screen, put the plugin back in front while another plugin holds `wp_mail()`.
-     *
-     * Only for users who may manage plugins: `admin_init` fires for every logged-in user who opens
-     * wp-admin, and reordering the active plugins is plugin management.
-     *
-     * @since 1.0.0
-     *
-     * @return void
-     */
-    public function repairLoadOrder(): void {
-        if (!\function_exists('current_user_can') || !\current_user_can('activate_plugins')) {
-            return;
-        }
-
-        $this->loadOrder()->repairWhenOutranked();
-    }
-
-    /**
-     * The load-order helper for this plugin's entry file.
-     *
-     * @since 1.0.0
-     *
-     * @return PluginLoadOrder
-     */
-    private function loadOrder(): PluginLoadOrder {
-        return new PluginLoadOrder(\plugin_basename(BOOLEAN_SMTP_FILE));
     }
 
     /**
@@ -581,22 +651,20 @@ class AppServiceProvider extends ServiceProvider {
     }
 
     /**
-     * Fire the extension point the Pro addon uses to register its own providers.
+     * Fire the extension point other plugins use to register their own providers.
      *
      * @since 1.0.0
      */
-    protected function registerProExtensionPoints(): void {
+    protected function registerExtensionPoints(): void {
         /**
-         * Fires during plugin boot so the Pro addon can register its service providers.
-         *
-         * The free plugin never contains Pro logic; this is the extension point the Pro
-         * addon hooks into to attach its own bindings, routes, and admin UI.
+         * Fires during plugin boot so another plugin can register service providers with the
+         * plugin's container: bindings, routes and admin screens of its own.
          *
          * @since 1.0.0
          *
          * @param \BooleanSmtp\Core\Container\Application $app The application container.
          */
-        \do_action('boolean_smtp_pro_register_providers', $this->app);
+        \do_action('boolean_smtp_register_extensions', $this->app);
     }
 
     /**
@@ -646,7 +714,7 @@ class AppServiceProvider extends ServiceProvider {
                 false
             );
 
-            // Same handle in dev and prod so add-ons can depend on 'boolean-smtp-app' unconditionally.
+            // Same handle in dev and prod so other plugins can depend on 'boolean-smtp-app' unconditionally.
             wp_enqueue_script(
                 'boolean-smtp-app',
                 $devServerUrl . '/src/main.jsx',
@@ -682,7 +750,7 @@ class AppServiceProvider extends ServiceProvider {
 
         // No version query: the file name carries the build hash, and the lazy chunks import this
         // entry by its bare URL. A `?ver=` would make the browser load it a second time as a
-        // different module, re-running the app and losing what the add-on registered.
+        // different module, re-running the app and losing what another plugin registered.
         wp_enqueue_script(
             'boolean-smtp-app',
             $publicUrl . '/' . $assets['js'],
@@ -893,7 +961,7 @@ class AppServiceProvider extends ServiceProvider {
      *
      * Includes the REST API base and nonce, plugin/WordPress/PHP versions, locale and
      * text direction, the current user's basic profile, translated UI strings, the OAuth
-     * redirect URIs for each provider, and the Pro addon's status.
+     * redirect URIs for each provider, and the entries other plugins add to the admin UI.
      *
      * @since 1.0.0
      *
@@ -920,10 +988,7 @@ class AppServiceProvider extends ServiceProvider {
             $locale = (string) \get_locale();
         }
 
-        /** @var ProCapabilityContract $proCapability */
-        $proCapability = $this->app->make(ProCapabilityContract::class);
-
-        return [
+        $props = [
             'apiBase'           => get_rest_url(null, 'booleansmtp/v1'),
             'adminUrl'          => \admin_url(),
             'nonce'             => wp_create_nonce('wp_rest'),
@@ -939,7 +1004,6 @@ class AppServiceProvider extends ServiceProvider {
             'oauthRedirectUris' => [
                 'google'    => OAuthRedirectUri::google(),
                 'microsoft' => OAuthRedirectUri::microsoft(),
-                'zoho'      => OAuthRedirectUri::zoho()
             ],
             /**
              * Filters whether the admin UI shows raw OAuth provider diagnostics.
@@ -964,16 +1028,23 @@ class AppServiceProvider extends ServiceProvider {
                 'plugin' => BooleanSmtpWpMail::takenOverBy(),
             ],
             'extensions' => $this->adminExtensions(),
-            'pro' => [
-                'installed'     => $proCapability->isInstalled(),
-                'licensed'      => $proCapability->isLicensed(),
-                'licenseStatus' => $proCapability->getLicenseStatus(),
-                'licenseHealth' => $proCapability->getLicenseHealth(),
-                'plan'          => $proCapability->getPlan(),
-                'features'      => $proCapability->getFeatures(),
-                'upgradeUrl'    => $proCapability->getUpgradeUrl(),
-            ],
         ];
+
+        /**
+         * Filters the data the admin screen starts with (`window.BooleanSmtpAdmin`).
+         *
+         * Other plugins may add keys of their own for the scripts they load on the plugin's
+         * screens. The plugin's own keys cannot be replaced: added keys are kept, changed ones
+         * are not.
+         *
+         * @since 1.0.0
+         *
+         * @param array<string, mixed> $props The admin screen's start-up data.
+         * @return array<string, mixed> The filtered data.
+         */
+        $filtered = \apply_filters('boolean_smtp_admin_data', $props);
+
+        return $props + (is_array($filtered) ? $filtered : []);
     }
 
     /**
@@ -1162,58 +1233,6 @@ class AppServiceProvider extends ServiceProvider {
                     'name'        => $t->translate('Microsoft Outlook'),
                     'description' => $t->translate('Deep integration with Office 365 services.')
                 ],
-                'zoho'         => [
-                    'name'        => $t->translate('Zoho Mail'),
-                    'description' => $t->translate('Secure email with SMTP and OAuth integration for business.')
-                ],
-                'mailgun'      => [
-                    'name'        => $t->translate('Mailgun'),
-                    'description' => $t->translate('Powerful APIs for developers.')
-                ],
-                'postmark'     => [
-                    'name'        => $t->translate('Postmark'),
-                    'description' => $t->translate('Lightning fast delivery for apps.')
-                ],
-                'sendgrid'     => [
-                    'name'        => $t->translate('SendGrid'),
-                    'description' => $t->translate('Leader in marketing & transactional email.')
-                ],
-                'brevo'        => [
-                    'name'        => $t->translate('Brevo'),
-                    'description' => $t->translate('Formerly Sendinblue. Great all-in-one suite.')
-                ],
-                'sparkpost'    => [
-                    'name'        => $t->translate('SparkPost'),
-                    'description' => $t->translate('High-performance email delivery for large volumes.')
-                ],
-                'netcore'      => [
-                    'name'        => $t->translate('Netcore'),
-                    'description' => $t->translate('Global cloud email service with robust delivery.')
-                ],
-                'smtp2go'      => [
-                    'name'        => $t->translate('SMTP2GO'),
-                    'description' => $t->translate('Reliable SMTP and API service with detailed reporting.')
-                ],
-                'mailersend'   => [
-                    'name'        => $t->translate('MailerSend'),
-                    'description' => $t->translate('Transactional email service with intuitive API and analytics.')
-                ],
-                'mandrill'     => [
-                    'name'        => $t->translate('Mandrill'),
-                    'description' => $t->translate('Mailchimp Transactional Email with powerful deliverability.')
-                ],
-                'sendlayer'    => [
-                    'name'        => $t->translate('SendLayer'),
-                    'description' => $t->translate('Simple and reliable transactional email delivery.')
-                ],
-                'smtpcom'      => [
-                    'name'        => $t->translate('SMTP.com'),
-                    'description' => $t->translate('Enterprise-grade SMTP relay with channel-based sending.')
-                ],
-                'elasticemail' => [
-                    'name'        => $t->translate('Elastic Email'),
-                    'description' => $t->translate('Cost-effective email delivery for transactional and marketing.')
-                ],
                 'php'          => [
                     'name'        => $t->translate('PHP Mail'),
                     'description' => $t->translate('Default server mail. Not recommended.')
@@ -1338,7 +1357,18 @@ class AppServiceProvider extends ServiceProvider {
      *                handles; unchanged for any other handle.
      */
     public function addTypeModule(string $tag, string $handle, string $src): string {
-        if (!in_array($handle, self::MODULE_SCRIPT_HANDLES, true)) {
+        /**
+         * Filters the script handles printed as ES modules (`type="module"`).
+         *
+         * Add the handle of a module script another plugin loads on the plugin's screens.
+         *
+         * @since 1.0.0
+         *
+         * @param list<string> $handles Script handles. Default the admin app and the Vite client.
+         * @return list<string> The filtered handles.
+         */
+        $handles = (array) \apply_filters('boolean_smtp_module_script_handles', self::MODULE_SCRIPT_HANDLES);
+        if (!in_array($handle, $handles, true)) {
             return $tag;
         }
 

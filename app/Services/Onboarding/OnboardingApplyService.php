@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace BooleanSmtp\Services\Onboarding;
 
 use BooleanSmtp\Contracts\EncryptorContract;
+use BooleanSmtp\Core\Exceptions\ValidationException;
 use BooleanSmtp\Models\Connection;
 use BooleanSmtp\Repositories\ConnectionRepository;
 use BooleanSmtp\Services\Migration\MigrationScanner;
@@ -61,6 +62,7 @@ final class OnboardingApplyService
      * @return array{connection: array{id: int, name: string, driver: string, is_active: bool}, made_primary: bool, logs_imported: int, logs_import: array<string, mixed>|null, onboarding: array<string, bool|int|string|null>}
      *
      * @throws \BooleanSmtp\Core\Exceptions\ModelNotFoundException When the connection does not exist.
+     * @throws ValidationException When an OAuth API draft has no renewable grant.
      */
     public function apply(
         int $connectionId,
@@ -70,6 +72,7 @@ final class OnboardingApplyService
         ?string $migrationSource = null
     ): array {
         $connection = $this->connections->findOrFail($connectionId);
+        $this->assertOAuthReady($connection);
 
         if (!$connection->is_active) {
             $connection = $this->connections->update($connectionId, ['is_active' => true]);
@@ -129,6 +132,35 @@ final class OnboardingApplyService
             'logs_import'           => $logsImport,
             'onboarding'            => $onboarding,
         ];
+    }
+
+    /**
+     * Prevent a deep link to Review from activating an OAuth draft without a refresh token.
+     *
+     * @since 1.0.0
+     *
+     * @param Connection $connection Draft being applied.
+     * @return void
+     * @throws ValidationException When the API connection has no renewable grant.
+     */
+    private function assertOAuthReady(Connection $connection): void
+    {
+        if (!\in_array((string) $connection->driver, ['google', 'outlook'], true)) {
+            return;
+        }
+
+        try {
+            $settings = $this->encryptor->decryptArray(\is_array($connection->settings) ? $connection->settings : []);
+        } catch (\Throwable) {
+            $settings = [];
+        }
+
+        if ((string) ($settings['delivery_mode'] ?? 'api') === 'api'
+            && trim((string) ($settings['refresh_token'] ?? '')) === '') {
+            throw new ValidationException([
+                'connection_id' => ['Connect the Google or Microsoft account before activating this mailer.'],
+            ]);
+        }
     }
 
     /**

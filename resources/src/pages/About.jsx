@@ -1,84 +1,19 @@
-import { Link } from 'react-router';
 import {
-    BarChart3,
-    Bell,
-    ClipboardList,
-    ExternalLink,
     FileText,
     HelpCircle,
-    Gauge,
     Mail,
     MessageCircle,
-    Repeat,
-    Route as RouteIcon,
     Send,
-    ShieldCheck,
     Star,
 } from 'lucide-react';
 
-import { ProBadge } from '@/components/ProBadge';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/ui/item';
 import { SectionCard } from '@/components/section-card';
-import { proFeatureValueProp, useProCapability } from '@/hooks/useProCapability';
 import { useTranslations } from '@/hooks/useTranslations';
 import { DOCS_URL } from '@/config/docs';
 
-const proHighlights = [
-    { key: 'routing.advanced', icon: RouteIcon, title: 'Advanced routing rules' },
-    { key: 'analytics.dashboard', icon: BarChart3, title: 'Real-time analytics' },
-    { key: 'deliverability.scoring', icon: Gauge, title: 'Deliverability scoring' },
-    { key: 'queue.intelligence', icon: Repeat, title: 'Smart retry queue' },
-    { key: 'governance.audit', icon: ClipboardList, title: 'Audit trail' },
-    { key: 'notifications.advanced', icon: Bell, title: 'Proactive connection alerts' },
-];
-
-// Keep the Pro card and its license-aware actions ready to re-enable on this page.
-const SHOW_ABOUT_PRO_SECTION = false;
-
-function ProCta({ t }) {
-    const { isProInstalled, isProLicensed, upgradeUrl } = useProCapability();
-
-    if (isProInstalled && isProLicensed) {
-        return (
-            <div className="flex flex-wrap items-center gap-3">
-                <Badge variant="success">
-                    <ShieldCheck />
-                    {t('about.pro_active', 'Pro is active')}
-                </Badge>
-                <Button variant="outline" size="sm" asChild>
-                    <Link to="/settings">{t('about.pro_manage', 'Manage in Settings')}</Link>
-                </Button>
-            </div>
-        );
-    }
-
-    if (isProInstalled) {
-        return (
-            <Button asChild>
-                <Link to="/settings">{t('about.pro_cta_connect', 'Connect your free account')}</Link>
-            </Button>
-        );
-    }
-
-    if (!upgradeUrl) {
-        return null;
-    }
-
-    return (
-        <Button asChild>
-            <a href={upgradeUrl} target="_blank" rel="noreferrer">
-                {t('about.pro_cta_get', 'Get free Pro access')}
-                <ExternalLink />
-            </a>
-        </Button>
-    );
-}
-
 export default function About() {
     const { t } = useTranslations();
-    const { isProLicensed } = useProCapability();
     const admin = typeof window !== 'undefined' ? window.BooleanSmtpAdmin || {} : {};
     const faqs = [
         [t('help.faq_1_question', 'Why are my emails not being sent?'), t('help.faq_1_answer', "Check your connection settings in the 'Connections' tab. Ensure your API keys or SMTP credentials are correct and that the connection is marked as 'Operational'.")],
@@ -114,30 +49,6 @@ export default function About() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <div className="space-y-6 lg:col-span-2">
                     <SectionCard
-                        title={t('about.developer_message_title', 'A message from the developer')}
-                        description={t(
-                            'about.developer_message_description',
-                            'Experience behind dependable WordPress email.'
-                        )}
-                    >
-                        <div className="max-w-3xl space-y-4 text-sm leading-6 text-muted-foreground">
-                            <p>{t('about.developer_message_greeting', 'Hello, and thank you for using BooleanSMTP.')}</p>
-                            <p>{t(
-                                'about.developer_message_experience',
-                                'For more than 15 years, I have worked with WordPress websites and plugins, and for over 10 years I have focused on email deliverability. My work has covered e-commerce, email servers, email marketing, and automation flows—areas where dependable email is essential to daily operations.'
-                            )}</p>
-                            <p>{t(
-                                'about.developer_message_scale',
-                                'I have operated private email infrastructure that handled up to 30 million emails a day. That experience taught me that email delivery is more than sending a message: it depends on careful configuration, trustworthy systems, and attention to the details that help critical emails reach their intended recipients.'
-                            )}</p>
-                            <p>{t(
-                                'about.developer_message_mission',
-                                'I built BooleanSMTP as one way to share that practical knowledge with the WordPress community. My goal is to help you create a more reliable email experience for your customers, team, and business, and to keep improving the plugin in ways that make dependable delivery easier to achieve.'
-                            )}</p>
-                        </div>
-                    </SectionCard>
-
-                    <SectionCard
                         title={(
                             <span className="flex items-center gap-2">
                                 <HelpCircle className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -155,30 +66,6 @@ export default function About() {
                         </dl>
                     </SectionCard>
 
-                    {SHOW_ABOUT_PRO_SECTION && (
-                        <SectionCard
-                            title={t('about.pro_title', 'BooleanSMTP Pro')}
-                            description={t(
-                                'about.pro_description',
-                                'Unlock every feature with a free BooleanPress account.'
-                            )}
-                            action={<ProBadge unlocked={isProLicensed} />}
-                            contentClassName="grid items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3"
-                            footer={<ProCta t={t} />}
-                        >
-                            {proHighlights.map(({ key, icon: Icon, title }) => (
-                                <div key={key} className="flex min-w-0 flex-col items-start gap-3 rounded-lg border p-4">
-                                    <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                                        <Icon className="size-4" />
-                                    </div>
-                                    <div className="min-w-0 space-y-1">
-                                        <p className="font-medium">{t(`about.pro_feature_${key}_title`, title)}</p>
-                                        <p className="text-sm text-muted-foreground">{proFeatureValueProp(key)}</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </SectionCard>
-                    )}
                 </div>
 
                 <div className="space-y-6 lg:col-span-1">

@@ -161,10 +161,6 @@ final class TestEmailRenderer {
             'google'     => $this->t('Google'),
             'outlook'    => $this->t('Microsoft 365'),
             'ses'        => $this->t('Amazon SES'),
-            'postmark'   => $this->t('Postmark'),
-            'mailgun'    => $this->t('Mailgun'),
-            'sendgrid'   => $this->t('SendGrid'),
-            'brevo'      => $this->t('Brevo'),
             'simulation' => $this->t('Simulation'),
             ''           => $this->t('Not configured'),
             default      => $this->oneLine($driver),
@@ -185,15 +181,17 @@ final class TestEmailRenderer {
             return $this->t('Not configured');
         }
 
-        $fallback = (string) ($connection->driver === 'php' ? 'wp_mail' : 'api');
+        $fallback = match ((string) $connection->driver) {
+            'php'   => 'wp_mail',
+            'smtp'  => 'smtp',
+            default => 'api',
+        };
         $mode     = strtolower($this->oneLine((string) ($settings['delivery_mode'] ?? $fallback)));
 
         return match ($mode) {
             'wp_mail'        => $this->t('WordPress default mail'),
             'smtp'           => $this->t('SMTP'),
             'api'            => $this->t('API'),
-            'one_click'      => $this->t('One-click connection'),
-            'app_permission' => $this->t('App permission'),
             ''               => $this->t('Not configured'),
             default          => $this->oneLine($mode),
         };

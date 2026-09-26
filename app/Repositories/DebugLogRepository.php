@@ -14,7 +14,7 @@ use BooleanSmtp\Core\Pagination\LengthAwarePaginator;
 
 /**
  * Debug sessions as files: one JSON file per email log entry under the sessions directory
- * (by default `wp-content/uploads/booleanpress/boolean-smtp/logs/debug-sessions/`, inside the
+ * (by default `wp-content/uploads/boolean-smtp/logs/debug-sessions/`, inside the
  * plugin's log root, whose size ceiling counts these files too). A transcript can hold the SMTP
  * conversation of a send, so the directory is shielded from direct requests: its `.htaccess`
  * denies access where Apache honours it, an `index.php` stops listings, and every file name

@@ -107,7 +107,7 @@ export default function TestEmail() {
     const [showActivityConsole, setShowActivityConsole] = useState(true);
     const [showApiDebug, setShowApiDebug] = useState(true);
     // "Default" sends through the connection chosen under Settings → Default Connection.
-    const defaultConnection = connections.find(c => String(c.id) === String(settings?.default_connection_id ?? '') && c.is_active !== false) || null;
+    const defaultConnection = connections.find(c => String(c.id) === String(settings?.default_connection_id ?? '')) || null;
     const defaultLabel = defaultConnection
         ? t('test_email.default_connection_named', 'Default connection — {{name}}', { name: defaultConnection.name })
         : t('test_email.default_connection', 'Default connection');
@@ -116,7 +116,9 @@ export default function TestEmail() {
         try {
             const res = await api.get('connections');
             const data = res.data ? res.data : res;
-            setConnections(Array.isArray(data) ? data : []);
+            const activeConnections = Array.isArray(data) ? data.filter(connection => connection.is_active === true) : [];
+            setConnections(activeConnections);
+            setConnectionId(current => current && !activeConnections.some(connection => String(connection.id) === current) ? '' : current);
         } catch (e) {
             console.error(e);
         }

@@ -139,16 +139,7 @@ final class WpMailMimeBuilder
         }
 
         if (! isset($from_email)) {
-            $sitename = \function_exists('wp_parse_url') && \function_exists('network_home_url')
-                ? \wp_parse_url(\network_home_url(), PHP_URL_HOST)
-                : null;
-            $from_email = 'wordpress@';
-            if (null !== $sitename && \is_string($sitename)) {
-                if (str_starts_with($sitename, 'www.')) {
-                    $sitename = substr($sitename, 4);
-                }
-                $from_email .= $sitename;
-            }
+            $from_email = self::defaultFromEmail();
         }
 
         /**
@@ -268,5 +259,41 @@ final class WpMailMimeBuilder
         }
 
         return $phpmailer;
+    }
+
+    /**
+     * Check whether a sender matches the address WordPress generates without a From header.
+     *
+     * @since 1.0.0
+     *
+     * @param string $address Sender address after the wp_mail_from filter.
+     * @return bool Whether the address still equals WordPress's generated default.
+     */
+    public static function isDefaultFromEmail(string $address): bool
+    {
+        return strcasecmp(trim($address), self::defaultFromEmail()) === 0;
+    }
+
+    /**
+     * Build WordPress's fallback sender from the network home host.
+     *
+     * @since 1.0.0
+     *
+     * @return string The generated sender address.
+     */
+    private static function defaultFromEmail(): string
+    {
+        $sitename = \function_exists('wp_parse_url') && \function_exists('network_home_url')
+            ? \wp_parse_url(\network_home_url(), PHP_URL_HOST)
+            : null;
+        $fromEmail = 'wordpress@';
+        if (null !== $sitename && \is_string($sitename)) {
+            if (str_starts_with($sitename, 'www.')) {
+                $sitename = substr($sitename, 4);
+            }
+            $fromEmail .= $sitename;
+        }
+
+        return $fromEmail;
     }
 }

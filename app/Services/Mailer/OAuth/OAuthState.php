@@ -60,7 +60,8 @@ final class OAuthState
             return null;
         }
 
-        if (time() - (int) $payload['ts'] > self::MAX_AGE_SECONDS) {
+        $age = time() - (int) $payload['ts'];
+        if ($age < 0 || $age > self::MAX_AGE_SECONDS) {
             return null;
         }
 

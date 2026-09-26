@@ -14,7 +14,7 @@ namespace BooleanSmtp\Services\Settings;
 /**
  * Resolves settings values from constants or environment variables.
  *
- * Naming convention: `BOOLEANSMTP_{DRIVER}_{KEY}` (for example `BOOLEANSMTP_SENDGRID_API_KEY`).
+ * Naming convention: `BOOLEANSMTP_{DRIVER}_{KEY}` (for example `BOOLEANSMTP_SMTP_PASSWORD`).
  * A resolved value overrides the corresponding database-stored setting; this lets a connection's
  * credentials be pinned in wp-config.php or the server environment instead of the database.
  *
@@ -26,7 +26,7 @@ class ConstantSettingsResolver {
      *
      * @since 1.0.0
      *
-     * @param  string               $driver       Connection driver slug (e.g. `ses`, `sendgrid`).
+     * @param  string               $driver       Connection driver slug (e.g. `ses`, `smtp`).
      * @param  array<string, mixed> $settings     Settings values loaded from the database.
      * @param  array<int, string>|null $expectedKeys Additional keys to check even when absent from
      *                                                 `$settings`.

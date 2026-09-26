@@ -1,14 +1,14 @@
 /**
- * Shared runtime contract between the free admin bundle (host) and the Pro bundle.
+ * Shared runtime contract between the admin bundle (host) and an extension's bundle.
  *
  * The host bundles React (and the libraries that carry React context or singleton
  * state) exactly once and publishes them on `window.BooleanSmtpApp.runtime`.
- * The Pro build externalises the same module ids to that object, so both bundles
- * share ONE React instance — hooks, context and Radix providers require it.
+ * An extension's build externalises the same module ids to that object, so both
+ * bundles share ONE React instance — hooks, context and Radix providers require it.
  *
  * Keep the two halves in sync:
- *   - `src/main.jsx`                      publishes `runtime`
- *   - `boolean-smtp-pro/resources/vite.config.js` consumes it via `hostRuntimePlugin`
+ *   - `src/main.jsx`   publishes `runtime`
+ *   - an extension's Vite config consumes it via `hostRuntimePlugin`
  */
 export const HOST_RUNTIME_GLOBAL = 'window.BooleanSmtpApp.runtime';
 
@@ -26,7 +26,7 @@ export const HOST_RUNTIME_MODULES = {
 
 /**
  * Guaranteed named exports per module (the host publishes exactly these; anything
- * else resolves to `undefined` in the Pro bundle):
+ * else resolves to `undefined` in the extension's bundle):
  *   react, react-dom, react-dom/client, react/jsx-runtime → full module namespaces
  *   react-router → HashRouter Link NavLink Navigate Outlet Route Routes useLocation useNavigate useParams useSearchParams
  *   sonner       → Toaster toast

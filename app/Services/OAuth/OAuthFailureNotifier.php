@@ -48,7 +48,7 @@ final class OAuthFailureNotifier {
      * @since 1.0.0
      *
      * @param  int     $connectionId Connection whose OAuth token failed to refresh.
-     * @param  string  $driver       OAuth provider driver key (`google`, `outlook` or `zoho`).
+     * @param  string  $driver       OAuth provider driver key (`google` or `outlook`).
      * @param  string  $errorCode    Standardized error code, as classified by
      *                               {@see OAuthErrorClassifier}.
      * @param  bool    $recoverable  Whether the error is expected to resolve on its own.
@@ -122,7 +122,6 @@ final class OAuthFailureNotifier {
         return match ($driver) {
             'google'  => 'Gmail / Google',
             'outlook' => 'Microsoft Outlook / Office 365',
-            'zoho'    => 'Zoho Mail',
             default   => \ucfirst($driver),
         };
     }

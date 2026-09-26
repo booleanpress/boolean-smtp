@@ -174,9 +174,8 @@ class ConnectionRepository
         /**
          * Fires after a connection has been written to the database, wherever the write came from.
          *
-         * Fires for the admin UI, the settings importer, the migration from another plugin, the
-         * Pro one-click flows and the OAuth token refresh alike — every path goes through the
-         * connection repository. `boolean_smtp_connection_created` and
+         * Fires for the admin UI, the settings importer, the migration from another plugin and the
+         * OAuth token refresh alike — every path goes through the connection repository. `boolean_smtp_connection_created` and
          * `boolean_smtp_connection_updated` are the admin UI's own events and fire only there.
          * The connection's credentials are encrypted at rest; decrypt `$connection->settings`
          * through the encryptor contract if you need them.

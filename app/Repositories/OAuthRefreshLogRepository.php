@@ -50,7 +50,7 @@ class OAuthRefreshLogRepository
      * @since 1.0.0
      *
      * @param  int         $connectionId  Connection the token belongs to.
-     * @param  string      $provider      OAuth provider (`google`, `microsoft`, `zoho`).
+     * @param  string      $provider      OAuth provider (`google`, `microsoft`).
      * @param  string      $status        `success` or `failed`.
      * @param  string|null $errorCode     Provider or classifier error code on failure.
      * @param  string|null $errorMessage  Human-readable failure detail.

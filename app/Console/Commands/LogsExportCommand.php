@@ -1,6 +1,6 @@
 <?php
 /**
- * WP-CLI command that exports email logs to a JSON file.
+ * WP-CLI command that prints email logs as JSON.
  *
  * @package BooleanSmtp
  * @since   1.0.0
@@ -14,7 +14,9 @@ use BooleanSmtp\Core\Console\Command;
 use BooleanSmtp\Repositories\EmailLogRepository;
 
 /**
- * `wp boolean-smtp logs:export` — write the recent email logs to a JSON file.
+ * `wp boolean-smtp logs:export` — print the recent email logs as one JSON document on standard
+ * output, so they can be piped or saved with a shell redirect (`wp boolean-smtp logs:export > logs.json`).
+ * The command writes no file itself.
  *
  * @since 1.0.0
  */
@@ -29,14 +31,13 @@ class LogsExportCommand extends Command {
      * @since 1.0.0
      * @var string
      */
-    protected string $description = 'Export BooleanSMTP email logs to a JSON file.';
+    protected string $description = 'Print BooleanSMTP email logs as JSON (redirect the output to save it).';
 
     /**
      * @since 1.0.0
      * @var array<array<string, mixed>>
      */
     protected array $synopsis = [
-        ['type' => 'assoc', 'name' => 'output', 'description' => 'File to write (relative to the current directory).', 'optional' => true, 'default' => 'boolean-smtp-logs.json'],
         ['type' => 'assoc', 'name' => 'days', 'description' => 'Export logs from the last N days.', 'optional' => true, 'default' => 30],
         ['type' => 'assoc', 'name' => 'status', 'description' => 'Only logs with this status (delivered, failed, pending, simulated); comma-separate several.', 'optional' => true],
     ];
@@ -57,37 +58,26 @@ class LogsExportCommand extends Command {
     public function __construct(private readonly EmailLogRepository $logs) {}
 
     /**
-     * Collect the matching logs page by page and write them as one JSON document.
+     * Collect the matching logs page by page and print them as one JSON document.
      *
      * @since 1.0.0
      *
      * @param array<int, string>   $args      Positional arguments; unused.
-     * @param array<string, mixed> $assocArgs `output` (path), `days` (int, default 30), `status` (string).
+     * @param array<string, mixed> $assocArgs `days` (int, default 30), `status` (string).
      */
     public function handle(array $args, array $assocArgs): void {
-        $output = (string) $this->option($assocArgs, 'output', 'boolean-smtp-logs.json');
         $days   = max(1, (int) $this->option($assocArgs, 'days', 30));
         $status = trim((string) $this->option($assocArgs, 'status', ''));
 
-        $this->info("Exporting logs from the last {$days} days...");
+        $json = json_encode($this->export($days, $status), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
-        $directory = dirname($output) ?: '.';
-        if (!is_dir($directory) || !\wp_is_writable($directory) || (file_exists($output) && !\wp_is_writable($output))) {
-            $this->error("Failed to write to {$output}.");
-
-            return;
-        }
-
-        $document = $this->export($days, $status);
-        $json     = json_encode($document, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-
-        if ($json === false || file_put_contents($output, $json) === false) {
-            $this->error("Failed to write to {$output}.");
+        if ($json === false) {
+            $this->error('The email logs could not be encoded as JSON.');
 
             return;
         }
 
-        $this->success("Exported {$document['total']} log(s) to {$output}.");
+        \WP_CLI::line($json);
     }
 
     /**

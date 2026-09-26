@@ -15,8 +15,6 @@
 @import "tailwindcss" important;
 @import "tw-animate-css";
 
-/* The Pro add-on ships no stylesheet of its own; its classes are compiled into this one. */
-@source "../../boolean-smtp-pro/resources/src";
 /* Docs and the WP-free preview shell are not UI source (the conventions doc lists forbidden classes as examples). */
 @source not "../UI_CONVENTIONS.md";
 @source not "../preview";
@@ -42,14 +40,14 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.580937 0.215512 32.7952);
+    --primary: oklch(0.53 0.26 267.58);
     --primary-foreground: oklch(1 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
     --muted: oklch(0.97 0 0);
     /* 0.52: 4.95:1 on the page background, 5.5:1 on cards (WCAG AA needs 4.5:1). */
     --muted-foreground: oklch(0.52 0 0);
-    --accent: oklch(0.959664 0.016111 34.2083);
+    --accent: oklch(0.97 0.014 267.58);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --destructive-foreground: oklch(0.984 0.003 247.858);
@@ -79,7 +77,7 @@
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: var(--primary);
     --sidebar-primary-foreground: oklch(1 0 0);
-    --sidebar-accent: oklch(0.939606 0.024434 34.21);
+    --sidebar-accent: oklch(0.95 0.025 267.58);
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: var(--primary);
@@ -93,13 +91,13 @@
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
     /* Lighten the brand shade so primary text remains readable on dark cards. */
-    --primary: oklch(0.713124 0.136796 34.9634);
+    --primary: oklch(0.70 0.12 267.58);
     --primary-foreground: oklch(0.145 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.705 0 0);
-    --accent: oklch(0.284311 0.02369 34.3637);
+    --accent: oklch(0.269 0.02 267.58);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --destructive-foreground: oklch(0.985 0 0);
@@ -126,7 +124,7 @@
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: var(--primary);
     --sidebar-primary-foreground: oklch(0.145 0 0);
-    --sidebar-accent: oklch(0.284311 0.02369 34.3637);
+    --sidebar-accent: oklch(0.269 0.02 267.58);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: var(--primary);
@@ -250,11 +248,19 @@ body.toplevel_page_boolean-smtp #adminmenuback {
 }
 
 /*
- * Neutralise WP admin element styles (common.css / forms.css) inside the app.
+ * Neutralise WP admin element styles (common.css / forms.css) inside the app
+ * and its portaled overlays.
  * These are unlayered so they beat WP's unlayered rules; Tailwind utilities still win
  * because they are emitted with `!important` (see the import at the top of this file).
  */
-#boolean-smtp-app :is(h1, h2, h3, h4, h5, h6, p, ul, ol, li, dl, dd, dt, figure, blockquote, pre) {
+:is(
+    #boolean-smtp-app,
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [data-slot="select-content"]
+) :is(h1, h2, h3, h4, h5, h6, p, ul, ol, li, dl, dd, dt, figure, blockquote, pre) {
     margin: 0;
     padding: 0;
     color: inherit;
@@ -264,10 +270,9 @@ body.toplevel_page_boolean-smtp #adminmenuback {
 }
 
 /*
- * Radix portals dialogs, menus, popovers and selects to <body>, outside #boolean-smtp-app,
- * so the ancestor-scoped resets below can't rely on that selector alone. Each overlay's
- * content root carries a stable data-slot regardless of where it's portaled, so the resets
- * key off those too.
+ * Radix portals dialogs, menus, popovers and selects to <body>, outside #boolean-smtp-app.
+ * Each overlay's content root carries a stable data-slot, which both resets use to keep
+ * WordPress admin styles out of the portaled content.
  */
 :is(
     #boolean-smtp-app,
@@ -345,6 +350,11 @@ body.toplevel_page_boolean-smtp #adminmenuback {
  * unlayered `!important` loses to a layered one, so the same rules outside a layer were beaten
  * by every overlay that carries its own `flex`/`grid` and `animate-out` utilities (dialogs,
  * the command palette, sheets). The earliest layer wins, so this one does.
+ *
+ * The mobile sidebar's drawer panel is a Sheet too, but the Sidebar primitive passes its own
+ * `data-slot="sidebar"` into `<SheetContent>`, which lands after (and so overrides) the
+ * component's own `data-slot="sheet-content"` attribute — the rendered panel never carries the
+ * `sheet-content` slot, only `sidebar` plus `data-mobile="true"`. It needs its own selector.
  */
 @layer overrides {
     [data-slot="select-content"][data-state="closed"],
@@ -356,7 +366,8 @@ body.toplevel_page_boolean-smtp #adminmenuback {
     [data-slot="alert-dialog-content"][data-state="closed"],
     [data-slot="alert-dialog-overlay"][data-state="closed"],
     [data-slot="sheet-content"][data-state="closed"],
-    [data-slot="sheet-overlay"][data-state="closed"] {
+    [data-slot="sheet-overlay"][data-state="closed"],
+    [data-slot="sidebar"][data-mobile="true"][data-state="closed"] {
         animation: none !important;
         display: none !important;
     }

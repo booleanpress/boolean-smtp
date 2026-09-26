@@ -110,7 +110,7 @@ export default function DoneScreen({ result, providerName, sender, retention, mi
                             ...(migration ? [{
                                 label: t('onboarding.done_imported_logs', 'Logs from {{plugin}}', { plugin: migration.sourceName }),
                                 value: !logs
-                                    ? t('onboarding.done_imported_logs_skipped', 'Not imported — the box on Review was left unticked; Tools → Migration can import them later')
+                                    ? t('onboarding.done_imported_logs_skipped', 'Not imported — the box on Review was left unticked.')
                                     : !logs.available
                                         ? (logs.reason || t('onboarding.done_imported_logs_none', 'No log to import'))
                                         : logsRunning

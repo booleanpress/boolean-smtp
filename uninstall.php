@@ -6,9 +6,9 @@
  * `wp plugin uninstall`). The plugin itself is not booted: only the Composer autoloader and
  * the framework's uninstaller are loaded. Deactivating the plugin never runs this file.
  *
- * Always removed: the plugin's scheduled events, and its log files and SMTP debug sessions under
- * `wp-content/uploads/booleanpress/boolean-smtp/logs/`. These are short-lived diagnostics that
- * nothing would prune once the plugin is gone.
+ * Always removed: the plugin's scheduled events, its log files and SMTP debug sessions under
+ * `wp-content/uploads/boolean-smtp/logs/`, and each user's dismissal of its admin notice. These are
+ * short-lived diagnostics and screen state that nothing would clean up once the plugin is gone.
  *
  * Kept by default: connections, email logs, settings and options, so a reinstall picks up where
  * the site left off. They are removed only when the site owner turned on **Settings › Delete data on
@@ -82,21 +82,17 @@ function boolean_smtp_uninstall_remove_logs(string $boolean_smtp_dir): void {
     @rmdir($boolean_smtp_dir); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- WP_Filesystem is not loaded during uninstall; an empty local directory is removed directly. left in place when something else is in it.
 }
 
-// Log files and SMTP debug sessions: `<uploads>/booleanpress/boolean-smtp/logs` by default, the
-// `boolean-smtp-logs` folder inside `BOOLEAN_SMTP_DEBUG_LOG_DIR` when that constant is set. The
-// `boolean-smtp/` folder and the shared `booleanpress/` folder under uploads go too when nothing else
-// is left in them.
-$boolean_smtp_custom_logs = \BooleanSmtp\Support\Logging\LogChannels::customParent();
-if ($boolean_smtp_custom_logs !== null) {
-    boolean_smtp_uninstall_remove_logs($boolean_smtp_custom_logs . '/' . \BooleanSmtp\Support\Logging\LogChannels::CUSTOM_FOLDER);
-}
+// Log files and SMTP debug sessions under `<uploads>/boolean-smtp/logs`; the `boolean-smtp/` folder
+// goes too when nothing else is left in it.
 $boolean_smtp_uploads = function_exists('wp_upload_dir') ? wp_upload_dir(null, false) : [];
 if (is_array($boolean_smtp_uploads) && !empty($boolean_smtp_uploads['basedir'])) {
-    $boolean_smtp_booleanpress = rtrim((string) $boolean_smtp_uploads['basedir'], '/\\') . '/booleanpress';
-    boolean_smtp_uninstall_remove_logs($boolean_smtp_booleanpress . '/boolean-smtp/logs');
-    @rmdir($boolean_smtp_booleanpress . '/boolean-smtp'); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- WP_Filesystem is not loaded during uninstall; an empty local directory is removed directly. non-empty is fine to leave.
-    @rmdir($boolean_smtp_booleanpress); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- WP_Filesystem is not loaded during uninstall; an empty local directory is removed directly. another BooleanPress plugin's logs keep it.
+    $boolean_smtp_logs = \BooleanSmtp\Support\Logging\LogChannels::directory((string) $boolean_smtp_uploads['basedir']);
+    boolean_smtp_uninstall_remove_logs($boolean_smtp_logs);
+    @rmdir(dirname($boolean_smtp_logs)); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- WP_Filesystem is not loaded during uninstall; an empty local directory is removed directly. non-empty is fine to leave.
 }
+
+// Each user's dismissal of the "another plugin claimed WordPress mail" notice.
+delete_metadata('user', 0, \BooleanSmtp\Providers\AppServiceProvider::TAKEOVER_DISMISSED_META, '', true);
 
 // Database footprint, only when the site owner opted in, through the framework's driver so no
 // plugin code runs against $wpdb directly.

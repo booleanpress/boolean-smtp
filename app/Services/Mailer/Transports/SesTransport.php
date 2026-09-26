@@ -453,14 +453,10 @@ class SesTransport implements TransportContract {
             ];
         }
 
-        // Configuration Set, custom API endpoint, SMTP keep-alive, and static message tags are
-        // Pro-only fields; Pro re-adds these four fields here for licensed users through this same
-        // filter. Without Pro installed and licensed, the schema is returned unchanged.
         /**
          * Filters the Amazon SES connection settings schema before it is returned to the admin UI.
          *
-         * Allows an add-on to extend the schema with additional fields (for example, Configuration
-         * Set, a custom API endpoint, SMTP keep-alive, or static message tags). Return the schema,
+         * Allows another plugin to extend the schema with additional fields. Return the schema,
          * keyed by field name.
          *
          * @since 1.0.0

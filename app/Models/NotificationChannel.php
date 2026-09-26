@@ -1,6 +1,6 @@
 <?php
 /**
- * Plain data object representing a configured notification channel.
+ * Plain data object representing the alert setup of one provider.
  *
  * @package BooleanSmtp
  * @since   1.0.0
@@ -11,25 +11,18 @@ declare(strict_types=1);
 namespace BooleanSmtp\Models;
 
 /**
- * Represents one notification channel, such as a Slack webhook or a Telegram chat.
+ * The alert setup of one provider (Telegram, Slack or Discord). Each provider has at most one
+ * setup, identified by its type.
  *
- * This is not an Eloquent-style model: channels are stored as a JSON array in
- * `booleanpress_options`, managed by NotificationChannelRepository.
+ * This is not an Eloquent-style model: setups are stored as JSON in `booleanpress_options`,
+ * managed by NotificationChannelRepository.
  *
  * @since 1.0.0
  */
 class NotificationChannel
 {
     /**
-     * Channel ID.
-     *
-     * @since 1.0.0
-     * @var int
-     */
-    public int $id;
-
-    /**
-     * Channel type, for example "slack" or "telegram".
+     * Provider type, for example "slack" or "telegram".
      *
      * @since 1.0.0
      * @var string
@@ -37,15 +30,7 @@ class NotificationChannel
     public string $type;
 
     /**
-     * Display name for this channel.
-     *
-     * @since 1.0.0
-     * @var string
-     */
-    public string $name;
-
-    /**
-     * Channel-specific settings.
+     * Provider-specific settings (webhook URL, bot token, chat ID, …).
      *
      * @since 1.0.0
      * @var array<string, mixed>
@@ -53,7 +38,7 @@ class NotificationChannel
     public array $settings;
 
     /**
-     * Whether this channel is enabled.
+     * Whether alerts are sent through this setup.
      *
      * @since 1.0.0
      * @var bool
@@ -61,7 +46,7 @@ class NotificationChannel
     public bool $is_active;
 
     /**
-     * Creation timestamp, if known.
+     * When the setup was first saved (UTC, `Y-m-d H:i:s`).
      *
      * @since 1.0.0
      * @var string|null
@@ -69,7 +54,7 @@ class NotificationChannel
     public ?string $created_at;
 
     /**
-     * Last update timestamp, if known.
+     * When the setup was last saved (UTC, `Y-m-d H:i:s`).
      *
      * @since 1.0.0
      * @var string|null
@@ -77,7 +62,7 @@ class NotificationChannel
     public ?string $updated_at;
 
     /**
-     * Create a notification channel from raw attributes.
+     * Create a setup from raw attributes.
      *
      * @since 1.0.0
      *
@@ -85,9 +70,7 @@ class NotificationChannel
      */
     public function __construct(array $attributes = [])
     {
-        $this->id         = (int) ($attributes['id'] ?? 0);
         $this->type       = (string) ($attributes['type'] ?? '');
-        $this->name       = (string) ($attributes['name'] ?? '');
         $this->settings   = is_array($attributes['settings'] ?? null) ? $attributes['settings'] : [];
         $this->is_active  = (bool) ($attributes['is_active'] ?? true);
         $this->created_at = $attributes['created_at'] ?? null;
@@ -95,12 +78,12 @@ class NotificationChannel
     }
 
     /**
-     * Create a notification channel from an array of attributes.
+     * Create a setup from an array of attributes.
      *
      * @since 1.0.0
      *
      * @param  array<string, mixed> $data Raw attributes.
-     * @return static The created channel.
+     * @return static The created setup.
      */
     public static function fromArray(array $data): static
     {
@@ -108,18 +91,16 @@ class NotificationChannel
     }
 
     /**
-     * Convert this channel back to an array for storage.
+     * Convert this setup back to an array.
      *
      * @since 1.0.0
      *
-     * @return array<string, mixed> The channel's attributes.
+     * @return array<string, mixed> The setup's attributes.
      */
     public function toArray(): array
     {
         return [
-            'id'         => $this->id,
             'type'       => $this->type,
-            'name'       => $this->name,
             'settings'   => $this->settings,
             'is_active'  => $this->is_active,
             'created_at' => $this->created_at,

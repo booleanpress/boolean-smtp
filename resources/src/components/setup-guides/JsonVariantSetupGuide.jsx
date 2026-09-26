@@ -34,14 +34,7 @@ export function GuideDocLink({ href = GENERAL_DOCS_URL, label }) {
 }
 
 export function resolveVariantKey(deliveryMode, keyStore) {
-    // 'app_permission' is Outlook-only (Pro, Graph client-credentials) -- other providers never
-    // set this deliveryMode, so their JSON simply has no app_permission_* key and the variant
-    // lookup below falls back to api_db, same as any other unrecognized mode always has.
-    const mode = deliveryMode === 'one_click'
-        ? 'one_click'
-        : (deliveryMode === 'app_permission'
-            ? 'app_permission'
-            : (deliveryMode === 'api' ? 'api' : 'smtp'));
+    const mode = deliveryMode === 'api' ? 'api' : 'smtp';
     const store = keyStore === 'wp_config' || keyStore === 'wp-config' || keyStore === 'env' ? 'wp_config' : 'db';
     return `${mode}_${store === 'wp_config' ? 'wp_config' : 'db'}`;
 }

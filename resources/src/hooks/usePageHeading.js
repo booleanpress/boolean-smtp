@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
  * Keep one `<h1>` per screen and announce navigation to assistive technology.
  *
  * Most screens render their own `<h1>`; a few (the dashboard, a connection's edit screen, some
- * add-on pages) rely on the title in the app's header. This watches the page content and reports
+ * pages other plugins register) rely on the title in the app's header. This watches the page content and reports
  * whether it carries a heading of its own, so the header can render its title as the `<h1>` only
  * when the page does not — including headings that appear after the page has loaded its data.
  *

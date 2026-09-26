@@ -1,7 +1,7 @@
 import { MAIL_PROVIDERS } from '@/config/mailers';
 
 /**
- * Wizard-side knowledge about the launched providers: which delivery mode the free plugin uses,
+ * Wizard-side knowledge about the providers: which delivery mode the free plugin uses,
  * how the transport schema is split into the Sender and Connection cards, which fields sit
  * behind "Advanced", and which schema keys the wizard never shows. Everything else — labels,
  * types, defaults, requirements — comes from `GET transports/{driver}`.
@@ -9,7 +9,7 @@ import { MAIL_PROVIDERS } from '@/config/mailers';
  * @since 1.0.0
  */
 
-/** Display order of the launched providers on the Provider step (mirrors the connection picker). */
+/** Display order of the providers on the Provider step (mirrors the connection picker). */
 export const WIZARD_DRIVER_ORDER = ['ses', 'google', 'outlook', 'smtp', 'php'];
 
 /** Delivery mode the free plugin uses for each multi-mode provider; fixed and hidden in the wizard. */
@@ -19,26 +19,10 @@ export const FREE_DELIVERY_MODE = { ses: 'api', google: 'api', outlook: 'api' };
 export const OAUTH_DRIVERS = ['google', 'outlook'];
 
 /**
- * Per-tab marker (sessionStorage) holding the draft id the wizard left for an OAuth consent, so
- * the relay's return to the connection screen is routed back to the wizard. Never a credential.
+ * Per-tab marker (sessionStorage) holding the draft id the wizard left for OAuth consent, so
+ * the hosted relay's return is routed back to the wizard. Never a credential.
  */
 export const OAUTH_RETURN_MARKER = 'boolean-smtp.onboarding.oauth-return';
-
-/**
- * Per-tab flag (sessionStorage) copied into the tab the wizard opens for an OAuth consent, so
- * that tab knows to report back and close itself once the account is connected.
- */
-export const OAUTH_CONSENT_TAB = 'boolean-smtp.onboarding.oauth-consent-tab';
-
-/**
- * Cross-tab channel (localStorage) the consent tab writes its outcome to; the wizard tab that
- * opened it listens for the `storage` event. Carries the connection id, the outcome and the
- * connected account — never a token or a code.
- */
-export const OAUTH_RESULT_KEY = 'boolean-smtp.onboarding.oauth-result';
-
-/** Window name of the consent tab, so a second click reuses it instead of opening another. */
-export const OAUTH_CONSENT_WINDOW = 'boolean-smtp-oauth-consent';
 
 /** Schema keys rendered in the Sender card, in order. */
 export const SENDER_KEYS = ['from_email', 'from_name'];
@@ -109,15 +93,15 @@ export function isMaskedSecret(value) {
 }
 
 /**
- * The launched providers in wizard order.
+ * The providers in wizard order.
  *
  * @since 1.0.0
  *
- * @returns {Array<object>} Registry entries from `MAIL_PROVIDERS` that are launched.
+ * @returns {Array<object>} Registry entries from `MAIL_PROVIDERS`.
  */
 export function wizardProviders() {
     return WIZARD_DRIVER_ORDER
-        .map(driver => MAIL_PROVIDERS.find(p => p.driver === driver && p.launched))
+        .map(driver => MAIL_PROVIDERS.find(p => p.driver === driver))
         .filter(Boolean);
 }
 

@@ -6,6 +6,7 @@ import {
     Info,
     LayoutDashboard,
     Plug,
+    Puzzle,
     Send,
     Settings,
 } from "lucide-react"
@@ -26,9 +27,9 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { TOOLTIP_DELAY_MS, TOOLTIP_SKIP_DELAY_MS } from "@/config/tooltips"
 import { useTranslations } from "@/hooks/useTranslations"
-import { useProCapability } from "@/hooks/useProCapability"
+import { useExtensions } from "@/hooks/useExtensions"
 import { useAdminExtensions } from "@/hooks/useAdminExtensions"
-import { PRO_NAV_ITEMS, PRO_TOOLS_NAV_ITEMS } from "@/config/proPages"
+import sidebarLogo from "@/assets/brand/boolean-smtp-mark.png"
 
 const mainNavItems = [
     { to: "/", labelKey: "layout.nav_overview", fallback: "Overview", icon: LayoutDashboard },
@@ -45,6 +46,29 @@ const settingsNavItems = [
 const aboutNavItems = [
     { to: "/about", labelKey: "layout.nav_about", fallback: "About", icon: Info },
 ]
+
+/**
+ * Sidebar entries for the routes other plugins register with a `nav` entry, for one group.
+ *
+ * A route registered through `window.BooleanSmtpApp.registerRoutes()` may carry
+ * `nav: { group: 'main' | 'tools' | 'settings', label, labelKey?, icon? }`.
+ *
+ * @since 1.0.0
+ *
+ * @param {Array<object>} routes Registered routes.
+ * @param {string}        group  The sidebar group.
+ * @returns {Array<{ to: string, labelKey: string, fallback: string, icon: import('react').ComponentType }>}
+ */
+function extensionNavItems(routes, group) {
+    return routes
+        .filter(route => route?.nav?.group === group && typeof route.path === "string")
+        .map(route => ({
+            to: `/${route.path.replace(/^\/+/, "")}`,
+            labelKey: route.nav.labelKey || "",
+            fallback: String(route.nav.label || route.path),
+            icon: route.nav.icon || Puzzle,
+        }))
+}
 
 function isRouteActive(pathname, to) {
     const exact = to === "/" || to === "/settings"
@@ -123,26 +147,26 @@ function ExtensionNavGroup({ label, items }) {
     )
 }
 
+/**
+ * Render the BooleanSMTP navigation and its product branding.
+ *
+ * @since 1.0.0
+ */
 export function AppSidebar(props) {
     const { t } = useTranslations()
-    const { isProInstalled } = useProCapability()
     const { menuItems } = useAdminExtensions()
-    const admin = window.BooleanSmtpAdmin || {}
-    const version = admin.version || ""
+    const { routes } = useExtensions()
 
     return (
         <Sidebar collapsible="icon" className="h-full" {...props}>
-            <SidebarHeader>
+            <SidebarHeader className="h-12 shrink-0 justify-center border-b border-border px-2 py-0">
                 <SidebarMenu>
                     <SidebarMenuItem>
-                        <SidebarMenuButton size="lg" asChild>
+                        <SidebarMenuButton size="lg" className="h-10" asChild>
                             <NavLink to="/">
-                                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                                    <Send className="size-4" />
-                                </div>
+                                <img src={sidebarLogo} alt="" width="32" height="32" className="size-8 shrink-0 object-contain" />
                                 <div className="grid flex-1 text-left text-sm leading-tight">
                                     <span className="truncate font-semibold">BooleanSMTP</span>
-                                    {version && <span className="truncate text-xs text-muted-foreground">v{version}</span>}
                                 </div>
                             </NavLink>
                         </SidebarMenuButton>
@@ -153,14 +177,9 @@ export function AppSidebar(props) {
             {/* The primitive nests its own provider with no delay; these are the app's settings. */}
             <TooltipProvider delayDuration={TOOLTIP_DELAY_MS} skipDelayDuration={TOOLTIP_SKIP_DELAY_MS}>
                 <SidebarContent>
-                    <NavGroup label={t("layout.section_main", "Main menu")} items={mainNavItems} />
-                    {/* The add-on's pages are listed as soon as it runs; each one says for itself
-                        what a licence unlocks, which is friendlier than a menu that hides them. */}
-                    {isProInstalled && (
-                        <NavGroup label={t("layout.section_pro", "Pro")} items={PRO_NAV_ITEMS} />
-                    )}
-                    <NavGroup label={t("layout.section_tools", "Tools")} items={isProInstalled ? [...toolsNavItems, ...PRO_TOOLS_NAV_ITEMS] : toolsNavItems} />
-                    <NavGroup label={t("layout.section_settings", "Settings")} items={settingsNavItems} />
+                    <NavGroup label={t("layout.section_main", "Main menu")} items={[...mainNavItems, ...extensionNavItems(routes, "main")]} />
+                    <NavGroup label={t("layout.section_tools", "Tools")} items={[...toolsNavItems, ...extensionNavItems(routes, "tools")]} />
+                    <NavGroup label={t("layout.section_settings", "Settings")} items={[...settingsNavItems, ...extensionNavItems(routes, "settings")]} />
                     <ExtensionNavGroup label={t("layout.section_extensions", "Extensions")} items={menuItems} />
                     <NavGroup label={t("layout.section_about", "About")} items={aboutNavItems} />
                 </SidebarContent>

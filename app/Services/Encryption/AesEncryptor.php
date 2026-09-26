@@ -292,7 +292,7 @@ class AesEncryptor implements EncryptorContract
      *
      * Matches by substring against a small set of fragments rather than an exact-match list of
      * key names. Connection settings use mode-specific field names for the same kind of secret
-     * (for example `api_access_key`, `smtp_username`, `smtp_password`, `one_click_bearer_token`);
+     * (for example `api_access_key`, `smtp_username`, `smtp_password`, `refresh_token`);
      * a fragment match catches all of them without keeping an exact-match list in sync as new
      * transports and field names are added. This method is part of {@see EncryptorContract} so
      * other components that need to know whether a field is a secret (for example when masking

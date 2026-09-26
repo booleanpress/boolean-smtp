@@ -125,9 +125,8 @@ function Disclosure({ icon: Icon, label, children, defaultOpen = false }) {
  * @param {object|null} props.draft Saved draft, when one exists.
  * @param {{ status: 'idle'|'running'|'passed'|'failed', message?: string, quota?: string, sent?: string, identity?: object|null }} [props.sesCheck] Result of "Validate with AWS".
  * @param {() => void} [props.onValidateSes]
- * @param {{ connected: boolean, account: string|null, status: 'idle'|'starting'|'waiting'|'exchanging'|'error', message?: string, redirectUri?: string, consentTab?: boolean }} [props.oauth] Account state for Google / Microsoft; `consentTab` when this page is the tab opened for the consent.
+ * @param {{ connected: boolean, account: string|null, status: 'idle'|'starting'|'exchanging'|'error', message?: string, redirectUri?: string }} [props.oauth] Account state for Google / Microsoft.
  * @param {() => void} [props.onConnectAccount]
- * @param {() => void} [props.onStopWaiting] Stop waiting for the consent tab.
  * @param {(uri: string) => void} [props.onCopyRedirectUri]
  * @param {() => void} props.onBack
  * @param {() => void} props.onContinue
@@ -148,7 +147,6 @@ export default function ConnectStep({
     onValidateSes = null,
     oauth = { connected: false, account: null, status: 'idle' },
     onConnectAccount = null,
-    onStopWaiting = null,
     onCopyRedirectUri = null,
     onBack,
     onContinue,
@@ -334,7 +332,7 @@ export default function ConnectStep({
                         {isOAuth && (
                             <div className="flex flex-col gap-3" aria-live="polite">
                                 <div>
-                                    <Button type="button" variant={oauth.connected ? 'outline' : 'default'} onClick={onConnectAccount} disabled={!oauthKeysEntered || oauth.status === 'starting' || oauth.status === 'waiting' || oauth.status === 'exchanging' || !onConnectAccount}>
+                                    <Button type="button" variant={oauth.connected ? 'outline' : 'default'} onClick={onConnectAccount} disabled={!oauthKeysEntered || oauth.status === 'starting' || oauth.status === 'exchanging' || !onConnectAccount}>
                                         {oauth.status === 'starting' ? <Spinner /> : <KeyRound />}
                                         {oauth.connected
                                             ? t('onboarding.reconnect_account', 'Reconnect account')
@@ -343,33 +341,9 @@ export default function ConnectStep({
                                                 : t('onboarding.connect_microsoft', 'Connect Microsoft account')}
                                     </Button>
                                     <p className="mt-1.5 text-xs text-muted-foreground">
-                                        {t('onboarding.connect_opens_new_tab', 'Opens the sign-in in a new tab; this page stays here and updates when you are done.')}
+                                        {t('onboarding.connect_opens_same_tab', 'You will sign in with the provider, then return here to finish setup.')}
                                     </p>
                                 </div>
-                                {oauth.status === 'waiting' && (
-                                    <Alert>
-                                        <Spinner className="size-4" />
-                                        <AlertTitle>{t('onboarding.oauth_waiting_title', 'Finish signing in in the other tab')}</AlertTitle>
-                                        <AlertDescription>
-                                            <p>{t('onboarding.oauth_waiting_desc', 'Approve the access there; this page picks it up by itself. If the tab did not open, allow pop-ups for this site and try again.')}</p>
-                                            <Button type="button" variant="outline" size="sm" onClick={onStopWaiting}>
-                                                {t('onboarding.oauth_waiting_cancel', 'Stop waiting')}
-                                            </Button>
-                                        </AlertDescription>
-                                    </Alert>
-                                )}
-                                {oauth.consentTab && (oauth.connected || oauth.status === 'error') && (
-                                    <Alert>
-                                        <CheckCircle2 />
-                                        <AlertTitle>{t('onboarding.consent_tab_done_title', 'You can close this tab')}</AlertTitle>
-                                        <AlertDescription>
-                                            <p>{t('onboarding.consent_tab_done_desc', 'The setup continues in the tab you started from. This one closes by itself in a moment.')}</p>
-                                            <Button type="button" variant="outline" size="sm" onClick={() => window.close()}>
-                                                {t('onboarding.consent_tab_close', 'Close this tab')}
-                                            </Button>
-                                        </AlertDescription>
-                                    </Alert>
-                                )}
                                 {oauth.status === 'exchanging' && (
                                     <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                         <Spinner className="size-4" />

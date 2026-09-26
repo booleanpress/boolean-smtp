@@ -18,10 +18,7 @@ import StepRail from '@/components/onboarding/StepRail';
 import VerifyStep from '@/components/onboarding/VerifyStep';
 import { useOnboardingState } from '@/components/onboarding/useOnboardingState';
 import {
-    OAUTH_CONSENT_TAB,
-    OAUTH_CONSENT_WINDOW,
     OAUTH_DRIVERS,
-    OAUTH_RESULT_KEY,
     OAUTH_RETURN_MARKER,
     displayValue,
     initialWizardSettings,
@@ -135,7 +132,7 @@ function settingErrors(errors) {
  *
  * @since 1.0.0
  *
- * @returns {{ provider: string, status: string, message: string, code: string, connectionId: string }|null}
+ * @returns {{ provider: string, status: string, message: string, code: string, oauthState: string, connectionId: string }|null}
  */
 function takeOAuthReturn() {
     if (typeof window === 'undefined') return null;
@@ -146,10 +143,11 @@ function takeOAuthReturn() {
     const status = p.get('oauth_status') || p.get('status') || (code ? 'code' : '');
     if (!provider || !status) return null;
     const message = p.get('oauth_message') || p.get('message') || '';
+    const oauthState = p.get('oauth_state') || '';
     const connectionId = p.get('oauth_connection_id') || p.get('connection') || '';
     ['oauth', 'status', 'message', 'oauth_provider', 'oauth_status', 'oauth_message', 'oauth_code', 'oauth_state', 'oauth_connection_id'].forEach(key => p.delete(key));
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-    return { provider: provider === 'microsoft' ? 'outlook' : provider, status, message, code, connectionId };
+    return { provider: provider === 'microsoft' ? 'outlook' : provider, status, message, code, oauthState, connectionId };
 }
 
 /**
@@ -165,41 +163,6 @@ function oauthProviderFor(driver) {
 }
 
 /**
- * Whether this tab is the one the wizard opened for an OAuth consent (the flag was in the
- * opener's sessionStorage when the tab was created, so the copy carries it).
- *
- * @since 1.0.0
- *
- * @returns {boolean}
- */
-function isConsentTab() {
-    try {
-        return window.sessionStorage.getItem(OAUTH_CONSENT_TAB) === '1';
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Tell the tab that opened this one how the consent ended. The `storage` event only fires in
- * other tabs, which is exactly the audience.
- *
- * @since 1.0.0
- *
- * @param {{ connectionId: number|string, status: 'connected'|'error', account?: string|null, message?: string }} result
- */
-function announceOAuthResult(result) {
-    try {
-        window.localStorage.setItem(OAUTH_RESULT_KEY, JSON.stringify({ ...result, at: Date.now() }));
-    } catch {
-        // Without the channel the opener's polling picks the connection up a few seconds later.
-    }
-}
-
-/** How often the waiting wizard re-reads the draft while the consent tab is open, in ms. */
-const OAUTH_WAIT_POLL_MS = 3000;
-
-/**
  * Whether a connection payload says its account is authorised.
  *
  * @since 1.0.0
@@ -208,7 +171,7 @@ const OAUTH_WAIT_POLL_MS = 3000;
  * @returns {boolean}
  */
 function isOAuthConnected(row) {
-    return Boolean(row && (row.oauth_refresh_available || row.oauth_token_expires_at));
+    return Boolean(row?.oauth_refresh_available);
 }
 
 /**
@@ -260,8 +223,6 @@ export default function OnboardingWizard() {
     const [sesCheck, setSesCheck] = useState({ status: 'idle' });
     const [oauth, setOauth] = useState({ connected: false, account: null, status: 'idle', message: '' });
     const oauthReturnRef = useRef(null);
-    const consentWindowRef = useRef(null);
-    const consentTab = useMemo(() => isConsentTab(), []);
 
     const [probe, setProbe] = useState({ status: 'idle' });
     const [test, setTest] = useState({ status: 'idle' });
@@ -353,28 +314,31 @@ export default function OnboardingWizard() {
                     setNameTouched(true);
                     setDraft(resumed);
                     const back = oauthReturnRef.current;
+                    if (back) {
+                        try {
+                            if (window.sessionStorage.getItem(OAUTH_RETURN_MARKER) === String(resumed.id)) {
+                                window.sessionStorage.removeItem(OAUTH_RETURN_MARKER);
+                            }
+                        } catch {
+                            // OAuth return still works when session storage is unavailable.
+                        }
+                    }
                     const codeForThisDraft = back && back.code && (!back.connectionId || String(back.connectionId) === String(resumed.id)) ? back.code : '';
                     if (codeForThisDraft) {
                         // The hosted relay brought an authorization code: exchange it now, with this
                         // session's credentials, and read the connected account back.
                         setOauth({ connected: false, account: null, status: 'exchanging', message: '' });
                         try {
-                            await api.post(`connections/${resumed.id}/oauth-token`, { token: codeForThisDraft, delivery_mode: 'api' });
+                            await api.post(`connections/${resumed.id}/oauth-token`, { token: codeForThisDraft, delivery_mode: 'api', oauth_state: back.oauthState });
                             const fresh = (await api.get(`connections/${resumed.id}`))?.data || resumed;
                             if (cancelled) return;
                             setDraft(fresh);
                             const connected = isOAuthConnected(fresh);
-                            setOauth({ connected, account: fresh.oauth_account_email || null, status: 'idle', message: '' });
-                            if (consentTab) {
-                                announceOAuthResult({ connectionId: fresh.id, status: connected ? 'connected' : 'error', account: fresh.oauth_account_email || null, message: connected ? '' : t('onboarding.oauth_no_grant', 'The provider did not grant offline access.') });
-                            }
+                            setOauth({ connected, account: fresh.oauth_account_email || null, status: connected ? 'idle' : 'error', message: connected ? '' : t('onboarding.oauth_no_grant', 'The provider did not grant offline access.') });
                         } catch (err) {
                             if (cancelled) return;
                             const message = err?.message || t('onboarding.oauth_exchange_failed', 'The authorization code could not be exchanged.');
                             setOauth({ connected: isOAuthConnected(resumed), account: resumed.oauth_account_email || null, status: 'error', message });
-                            if (consentTab) {
-                                announceOAuthResult({ connectionId: resumed.id, status: 'error', message });
-                            }
                         }
                     } else {
                         const refused = back && back.status !== 'success' && back.status !== 'code';
@@ -384,9 +348,6 @@ export default function OnboardingWizard() {
                             status: refused ? 'error' : 'idle',
                             message: refused ? back.message : '',
                         });
-                        if (consentTab && back) {
-                            announceOAuthResult({ connectionId: resumed.id, status: refused ? 'error' : 'connected', account: resumed.oauth_account_email || null, message: refused ? back.message : '' });
-                        }
                     }
                     if (onboarding.migration_source) {
                         setPath('import');
@@ -398,8 +359,11 @@ export default function OnboardingWizard() {
                         }
                     }
                     const urlStep = resolveOnboardingStepId(searchParams.get('step'));
-                    const firstIncomplete = !onboarding.connect ? STEP_CONNECT : (!onboarding.verify && !onboarding.verify_skipped ? STEP_VERIFY : STEP_REVIEW);
-                    const target = urlStep ? Math.min(ONBOARDING_STEP_IDS.indexOf(urlStep), STEP_REVIEW) : firstIncomplete;
+                    const needsOAuth = OAUTH_DRIVERS.includes(resumed.driver)
+                        && (resumed.settings?.delivery_mode || 'api') === 'api'
+                        && !isOAuthConnected(resumed);
+                    const firstIncomplete = !onboarding.connect || needsOAuth ? STEP_CONNECT : (!onboarding.verify && !onboarding.verify_skipped ? STEP_VERIFY : STEP_REVIEW);
+                    const target = urlStep ? Math.min(ONBOARDING_STEP_IDS.indexOf(urlStep), firstIncomplete) : firstIncomplete;
                     setStepIndex(Math.max(target, STEP_START));
                 } else {
                     const urlStep = resolveOnboardingStepId(searchParams.get('step'));
@@ -430,7 +394,7 @@ export default function OnboardingWizard() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialised, stepIndex, draft?.id, applyResult]);
 
-    // Connection check runs when the Verify step is entered.
+    // A connection check is available on request; entering Verify makes no provider call.
     const runProbe = useCallback(async () => {
         if (!draft?.id || !hasProbe) return;
         setProbe({ status: 'running' });
@@ -445,21 +409,19 @@ export default function OnboardingWizard() {
         }
     }, [draft, hasProbe, t]);
 
-    useEffect(() => {
-        if (!initialised || stepIndex !== STEP_VERIFY || probe.status !== 'idle') return undefined;
-        const timer = setTimeout(runProbe, 0);
-        return () => clearTimeout(timer);
-    }, [initialised, stepIndex, probe.status, runProbe]);
-
     const updateSetting = useCallback((key, value) => {
         setSettings(prev => ({ ...prev, [key]: value }));
+        if (OAUTH_DRIVERS.includes(driver) && ['client_id', 'client_secret', 'tenant_id', 'delivery_mode'].includes(key)
+            && settings[key] !== value) {
+            setOauth({ connected: false, account: null, status: 'idle', message: '' });
+        }
         setErrors(prev => {
             if (!prev[key]) return prev;
             const next = { ...prev };
             delete next[key];
             return next;
         });
-    }, []);
+    }, [driver, settings]);
 
     const focusField = useCallback((key) => {
         if (typeof document === 'undefined') return;
@@ -678,6 +640,9 @@ export default function OnboardingWizard() {
                 throw new Error(t('onboarding.draft_failed', 'The draft could not be saved.'));
             }
             setDraft(saved);
+            if (OAUTH_DRIVERS.includes(driver)) {
+                setOauth(prev => ({ ...prev, connected: isOAuthConnected(saved), account: saved.oauth_account_email || null }));
+            }
             setName(saved.name || connectionName);
             savedSettingsRef.current = payloadSettings;
             if (changed || !draft) {
@@ -704,12 +669,17 @@ export default function OnboardingWizard() {
         try {
             const result = await saveDraft();
             if (!result) return;
+            if (OAUTH_DRIVERS.includes(driver) && (settings.delivery_mode || 'api') === 'api'
+                && !isOAuthConnected(result.saved)) {
+                setOauth(prev => ({ ...prev, connected: false, status: 'error', message: t('onboarding.oauth_authorize_first', 'Authorize this account before continuing.') }));
+                return;
+            }
             await patch({ connect: true });
             goTo(STEP_VERIFY, result.saved.id);
         } finally {
             setBusy(false);
         }
-    }, [saveDraft, patch, goTo]);
+    }, [saveDraft, patch, goTo, driver, settings.delivery_mode, t]);
 
     const validateSes = useCallback(async () => {
         setBusy(true);
@@ -755,38 +725,13 @@ export default function OnboardingWizard() {
             if (!url) {
                 throw new Error(t('onboarding.oauth_no_url', 'The provider did not return an authorization URL.'));
             }
-            // The relay returns to the connection screen for this id; the marker routes it back to
-            // the wizard, and the consent-tab flag tells that tab to report back and close. Both
-            // are copied into the new tab at the moment it opens.
+            // The hosted relay still returns to the connection screen; the marker routes this
+            // tab back to the wizard after the provider redirects here.
             try {
                 window.sessionStorage.setItem(OAUTH_RETURN_MARKER, String(result.saved.id));
-                window.sessionStorage.setItem(OAUTH_CONSENT_TAB, '1');
             } catch {
-                // Without the marker the relay's return lands on the connection screen, where the
-                // code is exchanged as before; the wizard resumes from the dashboard afterwards.
+                // The local callback has its own onboarding return URL.
             }
-            let consentWindow = null;
-            try {
-                // A tab left over from an earlier attempt carries that attempt's marker: start afresh.
-                if (consentWindowRef.current && !consentWindowRef.current.closed && typeof consentWindowRef.current.close === 'function') {
-                    consentWindowRef.current.close();
-                }
-                consentWindow = window.open(url, OAUTH_CONSENT_WINDOW);
-            } catch {
-                consentWindow = null;
-            }
-            try {
-                window.sessionStorage.removeItem(OAUTH_CONSENT_TAB);
-            } catch {
-                // The flag only matters in the tab that was just opened.
-            }
-            if (consentWindow) {
-                // This page stays put and updates when the other tab reports back.
-                consentWindowRef.current = consentWindow;
-                setOauth(prev => ({ ...prev, status: 'waiting', message: '' }));
-                return;
-            }
-            // A blocked pop-up: same tab, the return brings the wizard back.
             window.location.assign(url);
         } catch (err) {
             setOauth(prev => ({ ...prev, status: 'error', message: err?.message || t('onboarding.oauth_request_failed', 'The authorization could not be started.') }));
@@ -794,70 +739,6 @@ export default function OnboardingWizard() {
             setBusy(false);
         }
     }, [driver, saveDraft, t]);
-
-    const stopWaitingForConsent = useCallback(() => {
-        consentWindowRef.current = null;
-        setOauth(prev => (prev.status === 'waiting' ? { ...prev, status: 'idle', message: '' } : prev));
-    }, []);
-
-    // While the consent tab is open: take its report the moment it arrives, and re-read the draft
-    // every few seconds in case the report never comes (the tab was closed, or storage is off).
-    useEffect(() => {
-        if (oauth.status !== 'waiting' || !draft?.id) return undefined;
-        let cancelled = false;
-        const draftId = String(draft.id);
-        // A reconnect starts from a row that is already connected: only a new grant (a new expiry) counts.
-        const before = { connected: isOAuthConnected(draft), expiresAt: draft.oauth_token_expires_at ?? null };
-        const refresh = async () => {
-            try {
-                const fresh = (await api.get(`connections/${draftId}`))?.data;
-                if (cancelled || !fresh || !isOAuthConnected(fresh)) return;
-                if (before.connected && (fresh.oauth_token_expires_at ?? null) === before.expiresAt) return;
-                setDraft(fresh);
-                setOauth({ connected: true, account: fresh.oauth_account_email || null, status: 'idle', message: '' });
-            } catch {
-                // Keep waiting; the next tick tries again.
-            }
-        };
-        const onStorage = (event) => {
-            if (event.key !== OAUTH_RESULT_KEY || !event.newValue) return;
-            let result = null;
-            try {
-                result = JSON.parse(event.newValue);
-            } catch {
-                result = null;
-            }
-            if (!result || String(result.connectionId) !== draftId) return;
-            if (result.status === 'error') {
-                setOauth(prev => ({ ...prev, status: 'error', message: result.message || '' }));
-                return;
-            }
-            refresh();
-        };
-        window.addEventListener('storage', onStorage);
-        window.addEventListener('focus', refresh);
-        const timer = window.setInterval(refresh, OAUTH_WAIT_POLL_MS);
-        return () => {
-            cancelled = true;
-            window.removeEventListener('storage', onStorage);
-            window.removeEventListener('focus', refresh);
-            window.clearInterval(timer);
-        };
-    }, [oauth.status, draft]);
-
-    // In the consent tab itself: once the outcome is known, close the tab (the wizard tab has it).
-    useEffect(() => {
-        if (!consentTab || !initialised || oauth.status === 'exchanging') return undefined;
-        if (!oauth.connected && oauth.status !== 'error') return undefined;
-        const timer = window.setTimeout(() => {
-            try {
-                window.close();
-            } catch {
-                // Some browsers keep a tab open that they did not open themselves; the page says so.
-            }
-        }, 1500);
-        return () => window.clearTimeout(timer);
-    }, [consentTab, initialised, oauth.connected, oauth.status]);
 
     const copyRedirectUri = useCallback(async (uri) => {
         try {
@@ -872,7 +753,7 @@ export default function OnboardingWizard() {
         if (!draft?.id) return;
         setTest({ status: 'sending' });
         try {
-            const res = await api.post('test-email', { to: recipient.trim(), connection_id: draft.id });
+            const res = await api.post('test-email', { to: recipient.trim(), connection_id: draft.id, onboarding_draft: true });
             const data = res?.data || {};
             if (data.sent) {
                 setTest({ status: 'accepted', to: recipient.trim(), at: now() });
@@ -885,17 +766,19 @@ export default function OnboardingWizard() {
         }
     }, [draft, recipient, patch, t]);
 
-    const skipVerify = useCallback(async () => {
+    const continueFromVerify = useCallback(async () => {
         setSkipBusy(true);
         try {
-            await patch({ verify_skipped: true });
+            if (test.status !== 'accepted') {
+                await patch({ verify_skipped: true });
+            }
             goTo(STEP_REVIEW);
         } catch (err) {
             toast.error(err?.message || t('onboarding.save_failed', 'Could not save your progress.'));
         } finally {
             setSkipBusy(false);
         }
-    }, [patch, goTo, t]);
+    }, [patch, goTo, t, test.status]);
 
     const apply = useCallback(async () => {
         if (!draft?.id) return;
@@ -1138,8 +1021,7 @@ export default function OnboardingWizard() {
                     draft={draft}
                     sesCheck={sesCheck}
                     onValidateSes={validateSes}
-                    oauth={{ ...oauth, redirectUri: OAUTH_DRIVERS.includes(driver) ? (admin.oauthRedirectUris?.[oauthProviderFor(driver)] || '') : '', consentTab }}
-                    onStopWaiting={stopWaitingForConsent}
+                    oauth={{ ...oauth, redirectUri: OAUTH_DRIVERS.includes(driver) ? (admin.oauthRedirectUris?.[oauthProviderFor(driver)] || '') : '' }}
                     onConnectAccount={connectAccount}
                     onCopyRedirectUri={copyRedirectUri}
                     onBack={() => goTo(STEP_PROVIDER)}
@@ -1162,10 +1044,8 @@ export default function OnboardingWizard() {
                     onRecipientChange={setRecipient}
                     onSendTest={sendTest}
                     onBack={() => goTo(STEP_CONNECT)}
-                    onSkip={skipVerify}
-                    skipBusy={skipBusy}
-                    onContinue={() => goTo(STEP_REVIEW)}
-                    continueBusy={busy}
+                    onContinue={continueFromVerify}
+                    continueBusy={busy || skipBusy}
                 />
             )}
 

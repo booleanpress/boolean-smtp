@@ -18,8 +18,8 @@ use function BooleanSmtp\Core\app;
 
 /**
  * Sends mail through the Microsoft Graph API's `sendMail` action, as a raw RFC 822 MIME body or
- * as a structured JSON message, and supports Outlook's One Click and Application Permission
- * connection modes through Pro-provided delegation.
+ * as a structured JSON message. A delivery mode another plugin provides is handed to
+ * {@see ExtensionDeliveryModes}.
  *
  * OAuth access tokens for the delegated `api` mode are refreshed automatically when they are
  * missing or close to expiring.
@@ -48,8 +48,8 @@ final class MicrosoftGraphMailSender {
     private const MICROSOFT_DELEGATED_SCOPE = 'offline_access https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Send.Shared https://graph.microsoft.com/User.Read';
 
     /**
-     * Diagnostic details about the most recent token resolution or One Click/Application
-     * Permission dispatch, for the admin UI and logs.
+     * Diagnostic details about the most recent token resolution or delivery-mode dispatch, for
+     * the admin UI and logs.
      *
      * @since 1.0.0
      * @var array<string, mixed>
@@ -115,8 +115,8 @@ final class MicrosoftGraphMailSender {
     /**
      * Send a message built by PHPMailer through Microsoft Graph.
      *
-     * Delegates to the One Click or Application Permission dispatch path when the connection's
-     * delivery mode requires it. In the delegated `api` mode, a message with attachments is always
+     * A delivery mode another plugin provides is handed to {@see ExtensionDeliveryModes}. In the
+     * delegated `api` mode, a message with attachments is always
      * sent through the raw-MIME path, since the JSON `sendMail` payload built by
      * {@see self::buildGraphMessagePayload()} does not carry PHPMailer attachments; a message
      * without attachments is sent as JSON, with a raw-MIME fallback on failure. The raw-MIME path
@@ -136,14 +136,11 @@ final class MicrosoftGraphMailSender {
      *                        failure otherwise.
      */
     public function sendGraphMessage(array &$settings, \PHPMailer\PHPMailer\PHPMailer $phpmailer): bool | \WP_Error {
+        $this->lastRequestDebug = [];
         $deliveryMode = (string) ($settings['delivery_mode'] ?? 'api');
 
-        if ($deliveryMode === 'one_click') {
-            return $this->dispatchOneClick('send', $settings, $this->extractMimeMessage($phpmailer));
-        }
-
-        if ($deliveryMode === 'app_permission') {
-            return $this->dispatchAppPermission('send', $settings, $this->extractMimeMessage($phpmailer));
+        if ($deliveryMode !== 'api') {
+            return $this->dispatchExtensionMode('send', $deliveryMode, $settings, $this->extractMimeMessage($phpmailer));
         }
 
         $token = $this->getValidAccessToken($settings, false);
@@ -182,164 +179,35 @@ final class MicrosoftGraphMailSender {
     }
 
     /**
-     * Dispatch a send or probe for an Outlook One Click connection.
-     *
-     * The actual bearer-token request against Microsoft Graph is implemented by the BooleanSMTP
-     * Pro add-on, which supplies its result through the `boolean_smtp_outlook_send_one_click` and
-     * `boolean_smtp_outlook_probe_one_click` filters (the same dispatch pattern used for Google's
-     * One Click mode). This method only validates that a bearer token is present before
-     * delegating; when the filter returns a value that is not a recognized result array, Pro is
-     * not active, and the call fails rather than silently doing nothing.
+     * Send through, or check, a delivery mode another plugin provides.
      *
      * @since 1.0.0
      *
-     * @param  string                $kind     Operation to dispatch: `send` or `probe`.
-     * @param  array<string, mixed>  $settings Decrypted connection settings. Passed by reference
-     *                                          because a successful dispatch may update
-     *                                          `one_click_status` in place.
-     * @param  string                $rawMime  Raw MIME message to send; ignored for `probe`.
+     * @param  string                $operation `send` or `probe`.
+     * @param  string                $mode      The connection's delivery mode.
+     * @param  array<string, mixed>  $settings  Decrypted connection settings. Passed by reference
+     *                                          because the handling plugin may ask to store settings.
+     * @param  string                $rawMime   Raw MIME message to send; empty for `probe`.
      * @return bool|\WP_Error True on success; a `WP_Error` describing the failure otherwise.
      */
-    private function dispatchOneClick(string $kind, array &$settings, string $rawMime = ''): bool | \WP_Error {
-        $token           = trim((string) ($settings['one_click_bearer_token'] ?? ''));
+    private function dispatchExtensionMode(string $operation, string $mode, array &$settings, string $rawMime = ''): bool | \WP_Error {
         $this->authDebug = [
-            'token_source'            => $token === '' ? 'missing_one_click_bearer' : 'one_click_bearer_token',
+            'token_source'            => 'delivery_mode:' . $mode,
             'refresh_attempted'       => false,
             'refresh_succeeded'       => false,
             'token_expires_at'        => null,
             'token_refresh_at'        => null,
             'token_seconds_remaining' => null
         ];
-        $this->persistableTokenFields = [];
 
-        if ($token === '') {
-            return new \WP_Error('booleansmtp_graph_one_click', 'Microsoft One Click requires a valid bearer token. Reconnect the account.');
+        [$result, $stored] = ExtensionDeliveryModes::dispatch($operation, $mode, 'outlook', $settings, $rawMime);
+
+        $this->persistableTokenFields = $stored;
+        foreach ($stored as $key => $value) {
+            $settings[$key] = $value;
         }
 
-        /**
-         * Filters the result of an Outlook One Click send.
-         *
-         * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-         * `success` key, is treated as Pro not being active.
-         *
-         * @since 1.0.0
-         *
-         * @param  mixed                 $result   Default value; null unless a callback has run.
-         *                                          Return `array{success: bool, error?: \WP_Error,
-         *                                          status?: string}` describing the outcome.
-         * @param  string                $rawMime  Raw MIME message being sent.
-         * @param  array<string, mixed>  $settings Decrypted connection settings.
-         * @return mixed The result to use, or the default to run the built-in behaviour.
-         */
-        $outcome = $kind === 'send'
-            ? \apply_filters('boolean_smtp_outlook_send_one_click', null, $rawMime, $settings)
-            /**
-             * Filters the result of an Outlook One Click connection probe.
-             *
-             * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-             * `success` key, is treated as Pro not being active.
-             *
-             * @since 1.0.0
-             *
-             * @param  mixed                 $result   Default value; null unless a callback has run.
-             *                                          Return `array{success: bool, error?: \WP_Error,
-             *                                          status?: string}` describing the outcome.
-             * @param  array<string, mixed>  $settings Decrypted connection settings.
-             * @return mixed The result to use, or the default to run the built-in behaviour.
-             */
-            : \apply_filters('boolean_smtp_outlook_probe_one_click', null, $settings);
-
-        if (!\is_array($outcome) || !\array_key_exists('success', $outcome)) {
-            return new \WP_Error('booleansmtp_graph_one_click', 'Microsoft One Click requires the BooleanSMTP Pro add-on to be active. Reconnect the account or contact support.');
-        }
-
-        if (!empty($outcome['status'])) {
-            $settings['one_click_status'] = $outcome['status'];
-            $this->persistableTokenFields = ['one_click_status' => $outcome['status']];
-        }
-
-        if ($outcome['success']) {
-            return true;
-        }
-
-        return $outcome['error'] instanceof \WP_Error
-            ? $outcome['error']
-            : new \WP_Error('booleansmtp_graph_one_click_http', 'Microsoft One Click request failed.');
-    }
-
-    /**
-     * Dispatch a send or probe for an Outlook Application Permission connection.
-     *
-     * Application Permission sending (client-credentials authentication, able to send as any
-     * mailbox in the tenant) is a Pro-only feature, implemented entirely by the BooleanSMTP Pro
-     * add-on and supplied through the `boolean_smtp_outlook_send_app_permission` and
-     * `boolean_smtp_outlook_probe_app_permission` filters. Unlike {@see self::dispatchOneClick()},
-     * no bearer token is stored on the connection for this mode; the client-credentials exchange
-     * happens entirely inside the Pro mailer using the connection's client id, client secret and
-     * tenant id, so there is nothing to validate here before delegating.
-     *
-     * @since 1.0.0
-     *
-     * @param  string                $kind     Operation to dispatch: `send` or `probe`.
-     * @param  array<string, mixed>  $settings Decrypted connection settings.
-     * @param  string                $rawMime  Raw MIME message to send; ignored for `probe`.
-     * @return bool|\WP_Error True on success; a `WP_Error` describing the failure otherwise.
-     */
-    private function dispatchAppPermission(string $kind, array &$settings, string $rawMime = ''): bool | \WP_Error {
-        $this->authDebug = [
-            'token_source'            => 'app_permission_client_credentials',
-            'refresh_attempted'       => false,
-            'refresh_succeeded'       => false,
-            'token_expires_at'        => null,
-            'token_refresh_at'        => null,
-            'token_seconds_remaining' => null
-        ];
-        $this->persistableTokenFields = [];
-
-        /**
-         * Filters the result of an Outlook Application Permission send.
-         *
-         * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-         * `success` key, is treated as Pro not being active or licensed.
-         *
-         * @since 1.0.0
-         *
-         * @param  mixed                 $result   Default value; null unless a callback has run.
-         *                                          Return `array{success: bool, error?: \WP_Error}`
-         *                                          describing the outcome.
-         * @param  string                $rawMime  Raw MIME message being sent.
-         * @param  array<string, mixed>  $settings Decrypted connection settings.
-         * @return mixed The result to use, or the default to run the built-in behaviour.
-         */
-        $outcome = $kind === 'send'
-            ? \apply_filters('boolean_smtp_outlook_send_app_permission', null, $rawMime, $settings)
-            /**
-             * Filters the result of an Outlook Application Permission connection probe.
-             *
-             * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-             * `success` key, is treated as Pro not being active or licensed.
-             *
-             * @since 1.0.0
-             *
-             * @param  mixed                 $result   Default value; null unless a callback has run.
-             *                                          Return `array{success: bool, error?: \WP_Error}`
-             *                                          describing the outcome.
-             * @param  array<string, mixed>  $settings Decrypted connection settings.
-             * @return mixed The result to use, or the default to run the built-in behaviour.
-             */
-            : \apply_filters('boolean_smtp_outlook_probe_app_permission', null, $settings);
-
-        if (!\is_array($outcome) || !\array_key_exists('success', $outcome)) {
-            return new \WP_Error('booleansmtp_graph_app_permission', 'Microsoft Application Permission sending requires the BooleanSMTP Pro add-on to be active and licensed.');
-        }
-
-        if ($outcome['success']) {
-            return true;
-        }
-
-        return $outcome['error'] instanceof \WP_Error
-            ? $outcome['error']
-            : new \WP_Error('booleansmtp_graph_app_permission_http', 'Microsoft Application Permission request failed.');
+        return $result;
     }
 
     /**
@@ -347,8 +215,7 @@ final class MicrosoftGraphMailSender {
      *
      * Returns `/me/sendMail` for the authorizing mailbox itself, or `/users/{mailbox}/sendMail`
      * when `send_as_shared_mailbox` is set, to send as a shared or delegated mailbox named in
-     * `from_email`. Only meaningful for the delegated `api` mode; One Click and Application
-     * Permission resolve their own endpoints inside their Pro mailers.
+     * `from_email`. Only meaningful for the delegated `api` mode.
      *
      * @since 1.0.0
      *
@@ -456,6 +323,10 @@ final class MicrosoftGraphMailSender {
 
             if ($code >= 300) {
                 $json = json_decode($body, true);
+                $providerCode = is_array($json) ? trim((string) ($json['error']['code'] ?? '')) : '';
+                if ($providerCode !== '') {
+                    $this->lastRequestDebug['provider_error_code'] = $providerCode;
+                }
                 $msg  = is_array($json) && isset($json['error']['message'])
                 ? (string) $json['error']['message']
                 : $body;
@@ -594,9 +465,7 @@ final class MicrosoftGraphMailSender {
     /**
      * Send a message as structured Graph JSON, for the delegated `api` mode only.
      *
-     * One Click and Application Permission never call this method; both send raw MIME through
-     * their Pro mailers (see {@see self::dispatchOneClick()} and
-     * {@see self::dispatchAppPermission()}). Attachment presence is already routed around this
+     * A delivery mode another plugin provides never calls this method. Attachment presence is already routed around this
      * method by {@see self::sendGraphMessage()}'s attachment check, so this path only runs for
      * attachment-free messages. Falls back to the raw-MIME path on any JSON send failure.
      *
@@ -641,9 +510,16 @@ final class MicrosoftGraphMailSender {
             ];
 
             $mime = $this->extractMimeMessage($phpmailer);
-            return $mime !== ''
-                ? $this->sendRawMime($settings, $mime)
-                : new \WP_Error('booleansmtp_graph_http', $this->http->getErrorMessage($response));
+            if ($mime !== '') {
+                $result = $this->sendRawMime($settings, $mime);
+                $this->lastRequestDebug['initial_json_error'] = [
+                    'status'              => null,
+                    'provider_error_code' => 'transport_error'
+                ];
+                return $result;
+            }
+
+            return new \WP_Error('booleansmtp_graph_http', $this->http->getErrorMessage($response));
         }
 
         $code = $this->http->responseCode($response);
@@ -658,12 +534,22 @@ final class MicrosoftGraphMailSender {
         ];
 
         if ($code >= 300) {
-            $mime = $this->extractMimeMessage($phpmailer);
-            if ($mime !== '') {
-                return $this->sendRawMime($settings, $mime);
+            $json = json_decode($body, true);
+            $providerCode = is_array($json) ? trim((string) ($json['error']['code'] ?? '')) : '';
+            if ($providerCode !== '') {
+                $this->lastRequestDebug['provider_error_code'] = $providerCode;
             }
 
-            $json = json_decode($body, true);
+            $mime = $this->extractMimeMessage($phpmailer);
+            if ($mime !== '') {
+                $result = $this->sendRawMime($settings, $mime);
+                $this->lastRequestDebug['initial_json_error'] = [
+                    'status'              => $code,
+                    'provider_error_code' => $providerCode
+                ];
+                return $result;
+            }
+
             $msg  = is_array($json) && isset($json['error']['message'])
             ? (string) $json['error']['message']
             : ($body !== '' ? $body : 'Microsoft Graph sendMail failed.');
@@ -723,8 +609,7 @@ final class MicrosoftGraphMailSender {
                 $fromAddress['name'] = (string) $phpmailer->FromName;
             }
 
-            $message['from']   = ['emailAddress' => $fromAddress];
-            $message['sender'] = ['emailAddress' => $fromAddress];
+            $message['from'] = ['emailAddress' => $fromAddress];
         }
 
         return $message;
@@ -844,8 +729,8 @@ final class MicrosoftGraphMailSender {
     /**
      * Verify that a connection's Microsoft Graph credentials are usable.
      *
-     * Delegates to the One Click or Application Permission dispatch path when the connection's
-     * delivery mode requires it. Otherwise resolves a valid OAuth access token, refreshing it
+     * A delivery mode another plugin provides is handed to {@see ExtensionDeliveryModes}.
+     * Otherwise resolves a valid OAuth access token, refreshing it
      * first if needed; when `$verifySendCapability` is true, additionally sends a real (but
      * unsaved) `sendMail` request to the connection's From address to confirm send capability,
      * rather than only validating the token.
@@ -864,12 +749,8 @@ final class MicrosoftGraphMailSender {
     public function probe(array &$settings, bool $verifySendCapability = false): bool | \WP_Error {
         $deliveryMode = (string) ($settings['delivery_mode'] ?? 'api');
 
-        if ($deliveryMode === 'one_click') {
-            return $this->dispatchOneClick('probe', $settings);
-        }
-
-        if ($deliveryMode === 'app_permission') {
-            return $this->dispatchAppPermission('probe', $settings);
+        if ($deliveryMode !== 'api') {
+            return $this->dispatchExtensionMode('probe', $deliveryMode, $settings);
         }
 
         $forceRefresh = !empty($settings['force_refresh']);

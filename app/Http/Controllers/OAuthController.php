@@ -1,7 +1,7 @@
 <?php
 
 /**
- * REST controller driving the delegated OAuth authorize/callback flow for Google, Microsoft, and Zoho.
+ * REST controller driving the delegated OAuth authorize/callback flow for Google and Microsoft.
  *
  * @package BooleanSmtp
  * @since   1.0.0
@@ -21,6 +21,8 @@ use BooleanSmtp\Adapters\Contracts\HttpAdapterContract;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthAccountIdentity;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthRedirectUri;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthState;
+use BooleanSmtp\Services\Mailer\OAuth\OAuthPendingConnection;
+use BooleanSmtp\Services\Mailer\OAuth\OAuthReturnGuard;
 
 /**
  * Builds provider authorization URLs and exchanges the returned code for tokens.
@@ -87,6 +89,10 @@ class OAuthController extends Controller {
             return $this->error('Connection must use the Google driver.', 422);
         }
 
+        if ((bool) $connection->is_active && $this->make(OAuthPendingConnection::class)->get($connectionId) === null) {
+            return $this->error('Stage the active mailer changes before authorizing again.', 422);
+        }
+
         $settings = $this->decryptedSettings($connection);
         $clientId = (string) ($settings['client_id'] ?? '');
         if ($clientId === '') {
@@ -112,8 +118,8 @@ class OAuthController extends Controller {
      * Handle `GET /booleansmtp/v1/oauth/google/callback`.
      *
      * Reads the `code` and `state` query parameters Google appends to the redirect, exchanges the
-     * code for tokens, stores the encrypted access/refresh tokens on the connection, and redirects
-     * back to the connection's admin screen.
+     * code for tokens, stores them on an inactive draft or in the active mailer's encrypted pending
+     * configuration, and redirects back to the connection's admin screen.
      *
      * @since 1.0.0
      *
@@ -145,9 +151,17 @@ class OAuthController extends Controller {
             return $this->redirect($redirectBase . '&oauth=google&status=error&message=' . rawurlencode('Invalid state.'));
         }
 
+        $returnGuard = $this->make(OAuthReturnGuard::class);
+        if (!$returnGuard->accepts($state, $decoded['connection_id'], 'google')) {
+            return $this->redirect($redirectBase . '&oauth=google&status=error&message=' . rawurlencode('Authorization expired or was already used.'));
+        }
+
         $connection = $this->connections->findOrFail($decoded['connection_id']);
         if ($connection->driver !== 'google') {
             return $this->redirect($this->callbackReturnUrl('google', 'error', 'Wrong connection type.', $decoded));
+        }
+        if ((bool) $connection->is_active && $this->make(OAuthPendingConnection::class)->get((int) $connection->id) === null) {
+            return $this->redirect($this->callbackReturnUrl('google', 'error', 'Pending mailer changes expired. Authorize again.', $decoded));
         }
 
         $settings     = $this->decryptedSettings($connection);
@@ -188,7 +202,9 @@ class OAuthController extends Controller {
             $settings['oauth_account_email'] = $account;
         }
 
-        $this->persistSettings($connection->id, $settings);
+        if (!$returnGuard->consume($state) || !$this->persistSettings($connection->id, $settings)) {
+            return $this->redirect($this->callbackReturnUrl('google', 'error', 'Could not save authorization. Authorize again.', $decoded));
+        }
 
         return $this->redirect($this->callbackReturnUrl('google', 'success', null, $decoded));
     }
@@ -197,8 +213,7 @@ class OAuthController extends Controller {
      * Handle `GET /booleansmtp/v1/oauth/microsoft/authorize`.
      *
      * Reads the `connection_id` query parameter and builds the Microsoft delegated
-     * bring-your-own-app OAuth consent URL for the Graph mail-send scope. The hosted One Click
-     * proxy flow is a separate, Pro-only integration and is not handled here.
+     * bring-your-own-app OAuth consent URL for the Graph mail-send scope.
      *
      * @since 1.0.0
      *
@@ -215,6 +230,10 @@ class OAuthController extends Controller {
         $connection = $this->connections->findOrFail($connectionId);
         if ($connection->driver !== 'outlook') {
             return $this->error('Connection must use the Outlook driver.', 422);
+        }
+
+        if ((bool) $connection->is_active && $this->make(OAuthPendingConnection::class)->get($connectionId) === null) {
+            return $this->error('Stage the active mailer changes before authorizing again.', 422);
         }
 
         $settings     = $this->decryptedSettings($connection);
@@ -262,8 +281,8 @@ class OAuthController extends Controller {
      * Handle `GET /booleansmtp/v1/oauth/microsoft/callback`.
      *
      * Reads the `code` and `state` query parameters Microsoft appends to the redirect, exchanges
-     * the code for tokens, stores the encrypted access/refresh tokens on the connection, and
-     * redirects back to the connection's admin screen.
+     * the code for tokens, stores them on an inactive draft or in the active mailer's encrypted
+     * pending configuration, and redirects back to the connection's admin screen.
      *
      * @since 1.0.0
      *
@@ -297,9 +316,17 @@ class OAuthController extends Controller {
             return $this->redirect($redirectBase . '&oauth=microsoft&status=error&message=' . rawurlencode('Invalid state.'));
         }
 
+        $returnGuard = $this->make(OAuthReturnGuard::class);
+        if (!$returnGuard->accepts($state, $decoded['connection_id'], 'microsoft')) {
+            return $this->redirect($redirectBase . '&oauth=microsoft&status=error&message=' . rawurlencode('Authorization expired or was already used.'));
+        }
+
         $connection = $this->connections->findOrFail($decoded['connection_id']);
         if ($connection->driver !== 'outlook') {
             return $this->redirect($this->callbackReturnUrl('microsoft', 'error', 'Wrong connection type.', $decoded));
+        }
+        if ((bool) $connection->is_active && $this->make(OAuthPendingConnection::class)->get((int) $connection->id) === null) {
+            return $this->redirect($this->callbackReturnUrl('microsoft', 'error', 'Pending mailer changes expired. Authorize again.', $decoded));
         }
 
         $settings     = $this->decryptedSettings($connection);
@@ -345,160 +372,11 @@ class OAuthController extends Controller {
             $settings['oauth_account_email'] = $account;
         }
 
-        $this->persistSettings($connection->id, $settings);
+        if (!$returnGuard->consume($state) || !$this->persistSettings($connection->id, $settings)) {
+            return $this->redirect($this->callbackReturnUrl('microsoft', 'error', 'Could not save authorization. Authorize again.', $decoded));
+        }
 
         return $this->redirect($this->callbackReturnUrl('microsoft', 'success', null, $decoded));
-    }
-
-    /**
-     * Handle `GET /booleansmtp/v1/oauth/zoho/authorize`.
-     *
-     * Reads the `connection_id` query parameter and builds the Zoho Mail OAuth consent URL for
-     * the connection's configured data-center region.
-     *
-     * @since 1.0.0
-     *
-     * @param Request $request Request carrying the `connection_id` query parameter.
-     * @return JsonResponse `{ authorization_url: string }`, or a 422 error when the connection id
-     *                       is missing, not a Zoho connection, or has no client ID saved.
-     */
-    public function zohoAuthorize(Request $request): JsonResponse {
-        $connectionId = (int) $request->query('connection_id', 0);
-        if ($connectionId <= 0) {
-            return $this->error('connection_id is required.', 422);
-        }
-
-        $connection = $this->connections->findOrFail($connectionId);
-        if ($connection->driver !== 'zoho') {
-            return $this->error('Connection must use the Zoho driver.', 422);
-        }
-
-        $settings = $this->decryptedSettings($connection);
-        $clientId = (string) ($settings['client_id'] ?? '');
-        if ($clientId === '') {
-            return $this->error('Save Zoho Client ID and Client Secret on the connection first.', 422);
-        }
-
-        $region      = (string) ($settings['region'] ?? 'us');
-        $authDomain  = self::zohoAuthDomain($region);
-        $redirectUri = OAuthRedirectUri::zoho();
-        $state       = OAuthState::encode($connectionId, 'zoho');
-        $scope       = rawurlencode('ZohoMail.messages.ALL ZohoMail.accounts.READ');
-
-        $url = sprintf(
-            '%s/oauth/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&state=%s',
-            $authDomain,
-            rawurlencode($clientId),
-            rawurlencode($redirectUri),
-            $scope,
-            rawurlencode($state)
-        );
-
-        return $this->ok(['authorization_url' => $url]);
-    }
-
-    /**
-     * Handle `GET /booleansmtp/v1/oauth/zoho/callback`.
-     *
-     * Reads the `code` and `state` query parameters Zoho appends to the redirect, exchanges the
-     * code for tokens, stores the encrypted access/refresh tokens and API domain on the
-     * connection, and redirects back to the admin connections screen.
-     *
-     * @since 1.0.0
-     *
-     * @param Request $request Request carrying the `code`, `state`, and, on failure, `error`
-     *                          query parameters Zoho appends to the redirect.
-     * @return Response|JsonResponse A redirect to the admin connections screen with the outcome
-     *                                encoded in the query string.
-     */
-    public function zohoCallback(Request $request): Response | JsonResponse {
-        $redirectBase = $this->adminConnectionsUrl();
-
-        if ($request->query('error')) {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode((string) $request->query('error')));
-        }
-
-        $code  = (string) $request->query('code', '');
-        $state = (string) $request->query('state', '');
-        if ($code === '' || $state === '') {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode('Missing code or state.'));
-        }
-
-        $decoded = OAuthState::decode($state);
-        if ($decoded === null || $decoded['provider'] !== 'zoho') {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode('Invalid state.'));
-        }
-
-        $connection = $this->connections->findOrFail($decoded['connection_id']);
-        if ($connection->driver !== 'zoho') {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode('Wrong connection type.'));
-        }
-
-        $settings     = $this->decryptedSettings($connection);
-        $clientId     = (string) ($settings['client_id'] ?? '');
-        $clientSecret = (string) ($settings['client_secret'] ?? '');
-        $region       = (string) ($settings['region'] ?? 'us');
-        if ($clientId === '' || $clientSecret === '') {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode('Missing client credentials.'));
-        }
-
-        $tokenUrl = self::zohoAuthDomain($region) . '/oauth/v2/token';
-
-        $response = \wp_remote_post($tokenUrl, [
-            'timeout' => 15,
-            'body'    => [
-                'client_id'     => $clientId,
-                'client_secret' => $clientSecret,
-                'code'          => $code,
-                'grant_type'    => 'authorization_code',
-                'redirect_uri'  => OAuthRedirectUri::zoho()
-            ]
-        ]);
-
-        if (is_wp_error($response)) {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode($response->get_error_message()));
-        }
-
-        $body = json_decode(\wp_remote_retrieve_body($response), true);
-        if (!\is_array($body) || empty($body['access_token'])) {
-            return $this->redirect($redirectBase . '&oauth=zoho&status=error&message=' . rawurlencode('Token exchange failed.'));
-        }
-
-        $settings['access_token']     = (string) $body['access_token'];
-        $settings['refresh_token']    = isset($body['refresh_token']) ? (string) $body['refresh_token'] : ($settings['refresh_token'] ?? '');
-        $settings['token_expires_at'] = isset($body['expires_in']) ? time() + (int) $body['expires_in'] : 0;
-        $settings['api_domain']       = (string) ($body['api_domain'] ?? 'https://mail.zoho.com');
-
-        $this->persistSettings($connection->id, $settings);
-
-        return $this->redirect($redirectBase . '&oauth=zoho&status=success');
-    }
-
-    /**
-     * Zoho OAuth account/authorization domain per data-center region.
-     *
-     * @since 1.0.0
-     */
-    private const ZOHO_AUTH_DOMAINS = [
-        'us' => 'https://accounts.zoho.com',
-        'eu' => 'https://accounts.zoho.eu',
-        'in' => 'https://accounts.zoho.in',
-        'cn' => 'https://accounts.zoho.com.cn',
-        'au' => 'https://accounts.zoho.com.au',
-        'jp' => 'https://accounts.zoho.jp',
-        'ca' => 'https://accounts.zohocloud.ca'
-    ];
-
-    /**
-     * Resolve the Zoho auth domain for a data-center region, falling back to the US domain.
-     *
-     * @since 1.0.0
-     *
-     * @param string $region Zoho data-center region code.
-     * @return string The region's OAuth account/authorization domain.
-     */
-    private static function zohoAuthDomain(string $region): string {
-        return self::ZOHO_AUTH_DOMAINS[$region] ?? self::ZOHO_AUTH_DOMAINS['us'];
     }
 
     /**
@@ -510,6 +388,13 @@ class OAuthController extends Controller {
      * @return array<string, mixed> Decrypted settings.
      */
     private function decryptedSettings(\BooleanSmtp\Models\Connection $connection): array {
+        if ((bool) $connection->is_active && \in_array((string) $connection->driver, ['google', 'outlook'], true)) {
+            $pending = $this->make(OAuthPendingConnection::class)->get((int) $connection->id);
+            if ($pending !== null) {
+                return (array) $pending['settings'];
+            }
+        }
+
         $raw = $connection->settings ?? [];
 
         return \is_array($raw) ? $this->encryptor->decryptArray($raw) : [];
@@ -522,11 +407,26 @@ class OAuthController extends Controller {
      *
      * @param int                   $connectionId Connection to update.
      * @param array<string, mixed>  $settings     Plaintext settings to encrypt and store.
+     * @return bool Whether the connection or pending configuration was saved.
      */
-    private function persistSettings(int $connectionId, array $settings): void {
+    private function persistSettings(int $connectionId, array $settings): bool {
+        $pendingStore = $this->make(OAuthPendingConnection::class);
+        $pending = $pendingStore->get($connectionId);
+        if ($pending !== null) {
+            $connection = $this->connections->findOrFail($connectionId);
+            if (!(bool) $connection->is_active) {
+                $pendingStore->delete($connectionId);
+                return false;
+            }
+            $pending['settings'] = $settings;
+            return $pendingStore->put($connectionId, $pending);
+        }
+
         $this->connections->update($connectionId, [
             'settings' => $this->encryptor->encryptArray($settings)
         ]);
+
+        return true;
     }
 
     /**

@@ -1,14 +1,13 @@
-import { Suspense, useState, useMemo, useEffect, useCallback } from 'react';
+import { Suspense, useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import api from '../services/api';
 import { MAIL_PROVIDERS } from '../config/mailers';
 import { getSetupGuideComponent } from '../components/setup-guides';
 
-import MailerModeTabs, { ProModeGateBanner, useIsModeLocked } from '../components/connections/MailerModeTabs';
-import { useProExtensions } from '../hooks/useProExtensions';
-import { useProCapability } from '../hooks/useProCapability';
-import { Info, CheckCircle2, HelpCircle, Code, Zap, Headset, Send, Copy, Check, Pencil, AlertCircle, ShieldCheck } from 'lucide-react';
+import MailerModeTabs from '../components/connections/MailerModeTabs';
+import { useExtensions } from '../hooks/useExtensions';
+import { Info, CheckCircle2, HelpCircle, Code, Zap, Headset, Send, Copy, Check, Pencil, AlertCircle, ShieldCheck, ChevronLeft } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,26 +38,20 @@ import DynamicSettingsForm from '../components/connections/DynamicSettingsForm';
 import OAuthRefreshHistoryPanel from '../components/OAuthRefreshHistoryPanel';
 import { useTranslations, translate } from '../hooks/useTranslations';
 
-/** Must match dual-mode list in MailerManager::isApiDeliveryMode + OAuth trio */
-const MULTI_MODE_DRIVERS = [
-    'ses', 'google', 'outlook', 'zoho',
-    'sendgrid', 'mailgun', 'postmark', 'brevo',
-    'sparkpost', 'netcore', 'smtp2go',
-    'mailersend', 'mandrill', 'sendlayer',
-    'smtpcom', 'elasticemail',
-];
-const OAUTH_DRIVERS = ['google', 'gmail', 'outlook', 'zoho'];
-/** Drivers with a hosted "One Click" OAuth proxy flow (delivery_mode === 'one_click'). */
-const ONE_CLICK_DRIVERS = ['outlook', 'google'];
+/** Must match the dual-mode list in MailerManager::isApiDeliveryMode. */
+const MULTI_MODE_DRIVERS = ['ses', 'google', 'outlook'];
+const OAUTH_DRIVERS = ['google', 'gmail', 'outlook'];
+/** The delivery modes the plugin itself provides; any other mode belongs to another plugin. */
+const BUILT_IN_MODES = ['api', 'smtp'];
 
 /**
- * Renders whatever Pro has registered for this driver+slot (e.g. SES identity management),
- * or nothing at all if Pro isn't installed/licensed -- same shape as Settings.jsx's
+ * Renders whatever another plugin registered for this driver+slot through
+ * `window.BooleanSmtpApp.registerConnectionPanels()`, or nothing -- same shape as Settings.jsx's
  * SettingsExtensionPanel. Extra props are forwarded to the registered component.
  */
 function ConnectionPanelSlot({ driver, slot, ...panelProps }) {
-    const { proConnectionPanels } = useProExtensions();
-    const panel = proConnectionPanels.find((p) => p.driver === driver && p.slot === slot);
+    const { connectionPanels } = useExtensions();
+    const panel = connectionPanels.find((p) => p.driver === driver && p.slot === slot);
     if (!panel?.component) {
         return null;
     }
@@ -89,34 +82,15 @@ function getOAuthRedirectDisplayUri(driver) {
 }
 
 /**
- * Path (relative to the REST namespace root, no leading `oauth/`) for the authorize/callback
- * calls -- both Google's and Microsoft's One Click flows live under `pro/oauth/...` as of
- * 2026-09-19 (GoogleOneClickController and MicrosoftOneClickController, both relocated to
- * boolean-smtp-pro/routes/api.php); every other OAuth flow (the delegated `api` mode for either
- * provider, Zoho) stays under the free plugin's `oauth/...` namespace.
+ * Path (relative to the REST namespace root) of the delegated OAuth authorize/callback calls for
+ * the plugin's own `api` mode.
  */
-function oauthAuthorizePath(driver, deliveryMode = 'api') {
-    if (driver === 'outlook') {
-        if (deliveryMode === 'one_click') {
-            return 'pro/oauth/microsoft/one-click';
-        }
-        return 'oauth/microsoft';
-    }
-    if (driver === 'google' && deliveryMode === 'one_click') {
-        return 'pro/oauth/google/one-click';
-    }
-    return `oauth/${driver}`;
+function oauthAuthorizePath(driver) {
+    return driver === 'outlook' ? 'oauth/microsoft' : `oauth/${driver}`;
 }
 
-function oauthStatusProvider(driver, deliveryMode = 'api') {
-    if (driver === 'outlook') {
-        return deliveryMode === 'one_click' ? 'microsoft_one_click' : 'microsoft';
-    }
-    if (driver === 'google' && deliveryMode === 'one_click') {
-        return 'google_one_click';
-    }
-
-    return driver;
+function oauthStatusProvider(driver) {
+    return driver === 'outlook' ? 'microsoft' : driver;
 }
 
 function hasStoredOAuthTokens(settings) {
@@ -144,18 +118,6 @@ function isLikelyEmail(value) {
 function isLikelyMaskedSecretPlaceholder(value) {
     const v = String(value ?? '').trim();
     return /^\*{4,}\S{0,8}$/.test(v);
-}
-
-function maskTokenPreview(value) {
-    const v = String(value ?? '').trim();
-    if (!v) {
-        return '';
-    }
-    if (v.length <= 8) {
-        return '*'.repeat(v.length);
-    }
-
-    return `${v.slice(0, 4)}${'*'.repeat(Math.max(4, v.length - 8))}${v.slice(-4)}`;
 }
 
 // SES's region and SMTP host:port options come from the backend (SesTransport::getSettingsSchema()
@@ -367,7 +329,7 @@ export default function ConnectionForm({
     senderConflict = null
 }) {
     const { t } = useTranslations();
-    const { isProLicensed } = useProCapability();
+    const navigate = useNavigate();
 
     const provider = useMemo(() => MAIL_PROVIDERS.find(p => p.driver === driver), [driver]);
     const providerDisplayName = useMemo(
@@ -381,13 +343,24 @@ export default function ConnectionForm({
     const [nameTouched, setNameTouched] = useState(false);
     const [fromEmailTouched, setFromEmailTouched] = useState(false);
     const [fromNameTouched, setFromNameTouched] = useState(false);
-    const [form, setForm] = useState({
-        name: initialData?.name || t('connection_form.name_placeholder', 'My {{provider}} Connection', { provider: providerDisplayName }),
-        is_active: initialData?.is_active ?? true,
-        priority: initialData?.priority ?? 0,
-        settings: driver === 'ses'
-            ? normalizeSesSettingsForForm(initialData?.settings || {})
-            : (initialData?.settings || {})
+    const [form, setForm] = useState(() => {
+        const savedDraft = initialData?.oauth_pending || null;
+        const source = savedDraft || initialData;
+        const settings = driver === 'ses'
+            ? normalizeSesSettingsForForm(source?.settings || {})
+            : (source?.settings || {});
+
+        return {
+            name: source?.name || t('connection_form.name_placeholder', 'My {{provider}} Connection', { provider: providerDisplayName }),
+            is_active: initialData?.is_active ?? true,
+            priority: source?.priority ?? 0,
+            settings: {
+                ...settings,
+                force_from_email: settings.force_from_email ?? true,
+                force_from_name: settings.force_from_name ?? true,
+                ...(driver === 'smtp' ? { port: settings.port ?? 587 } : {}),
+            },
+        };
     });
 
     const { senderSchema, connectionSchema } = useMemo(() => {
@@ -410,10 +383,8 @@ export default function ConnectionForm({
         return { senderSchema: sender, connectionSchema: connection };
     }, [metadata]);
 
-    // Length > 0, not > 1: this used to be equivalent (every MULTI_MODE_DRIVERS entry always had
-    // >=2 native modes), but Outlook now natively offers only 'api' on a Pro-free site (SMTP was
-    // removed 2026-09-19; One Click/Application Permission only exist once Pro adds them via
-    // filter) -- with a >1 requirement, a Pro-free Outlook connection would fall through to the
+    // Length > 0, not > 1: Outlook offers only 'api' unless another plugin registers a mode --
+    // with a >1 requirement, an Outlook connection would fall through to the
     // generic single-mode rendering path below, which has no delivery_mode-aware field visibility
     // (client_id/tenant_id never render, since form.settings.delivery_mode is never actually set
     // to 'api' for a new connection) and no OAuth Authorize/redirect-URI UI at all. MailerModeTabs
@@ -428,13 +399,13 @@ export default function ConnectionForm({
     );
     const isOAuthDriver = useMemo(() => OAUTH_DRIVERS.includes(driver), [driver]);
     const activeDeliveryMode = form.settings.delivery_mode || 'api';
-    const isActiveModeLocked = useIsModeLocked(activeDeliveryMode);
-    const isOneClickMode = ONE_CLICK_DRIVERS.includes(driver) && activeDeliveryMode === 'one_click';
+    const isExtensionMode = isMultiMode && !BUILT_IN_MODES.includes(activeDeliveryMode);
+    const isDelegatedHostedOAuth = ['google', 'outlook'].includes(driver) && activeDeliveryMode === 'api';
 
     const orderedDeliveryModes = useMemo(() => {
         const modes = metadata?.delivery_modes || {};
         const entries = Object.entries(modes).sort((a, b) => {
-            const rank = (k) => (k === 'api' ? 0 : k === 'smtp' ? 1 : k === 'one_click' ? 2 : 9);
+            const rank = (k) => (k === 'api' ? 0 : k === 'smtp' ? 1 : 2);
             return rank(a[0]) - rank(b[0]);
         });
         return Object.fromEntries(entries);
@@ -544,11 +515,7 @@ export default function ConnectionForm({
                 },
             };
         }
-        let modeSchema = pickSchemaForMode(connectionSchema, 'api');
-        if (driver === 'zoho') {
-            const { client_id: _cid, client_secret: _cs, ...rest } = modeSchema;
-            modeSchema = rest;
-        }
+        const modeSchema = pickSchemaForMode(connectionSchema, 'api');
         const prioritizedKeys = ['region', 'api_key', 'client_id', 'client_secret', 'tenant_id', 'domain', 'username', 'password'];
         return {
             ...pickSchema(modeSchema, prioritizedKeys),
@@ -556,38 +523,14 @@ export default function ConnectionForm({
         };
     }, [connectionSchema, driver, metadata, schemaLabels.accessKeyId, schemaLabels.secretAccessKey, schemaLabels.region]);
 
-    const zohoApiCredentialSchema = useMemo(() => {
-        if (driver !== 'zoho') {
-            return {};
-        }
-        return pickSchema(pickSchemaForMode(connectionSchema, 'api'), ['client_id', 'client_secret']);
-    }, [connectionSchema, driver]);
-
-    const oneClickTabSchema = useMemo(() => {
-        if (!isOneClickMode) {
-            return {};
-        }
-
-        const modeSchema = pickSchemaForMode(connectionSchema, 'one_click');
-        const {
-            one_click_bearer_token: _token,
-            one_click_status: _status,
-            ...safeSchema
-        } = modeSchema;
-        return safeSchema;
-    }, [connectionSchema, isOneClickMode]);
-
     /**
-     * Pro-only Application Permission mode (Outlook, client-credentials send-as-any-mailbox) --
-     * its own credential fields (app_client_id/app_client_secret/app_tenant_id), separate from
-     * the delegated `api` mode's client_id/client_secret/tenant_id, added via
-     * boolean_smtp_outlook_settings_schema by boolean-smtp-pro's MicrosoftSchemaExtender. Only
-     * relevant for outlook -- other drivers never have an 'app_permission' mode in their schema,
-     * so pickSchemaForMode() naturally returns {} for them.
+     * Fields of a delivery mode another plugin registers: whatever its schema declares for the
+     * mode, rendered generically; the plugin adds any connect step of its own through a
+     * `mode:<mode>` connection panel.
      */
-    const appPermissionTabSchema = useMemo(
-        () => pickSchemaForMode(connectionSchema, 'app_permission'),
-        [connectionSchema]
+    const extensionModeSchema = useMemo(
+        () => (isExtensionMode ? pickSchemaForMode(connectionSchema, activeDeliveryMode) : {}),
+        [connectionSchema, isExtensionMode, activeDeliveryMode]
     );
 
     const genericConnectionSchema = useMemo(() => {
@@ -604,7 +547,14 @@ export default function ConnectionForm({
     const [tokenSaveBusy, setTokenSaveBusy] = useState(false);
     const [authorizeBusy, setAuthorizeBusy] = useState(false);
     const [verifyMessage, setVerifyMessage] = useState('');
+    const [verifyResult, setVerifyResult] = useState(null);
     const [oauthInlineMessage, setOauthInlineMessage] = useState('');
+    const [oauthFeedback, setOauthFeedback] = useState(null);
+    const [oauthReturnConnected, setOauthReturnConnected] = useState(false);
+    const [oauthAccountEmail, setOauthAccountEmail] = useState(initialData?.oauth_pending?.oauth_account_email || initialData?.oauth_account_email || '');
+    const [oauthRequiresReconnect, setOauthRequiresReconnect] = useState(false);
+    const [oauthStaged, setOauthStaged] = useState(Boolean(initialData?.oauth_pending));
+    const oauthReturnHandledRef = useRef(false);
     const [oauthConnectionId, setOauthConnectionId] = useState(initialData?.id ?? null);
     const [redirectCopied, setRedirectCopied] = useState(false);
     const [transportConstantsCopied, setTransportConstantsCopied] = useState(false);
@@ -618,14 +568,11 @@ export default function ConnectionForm({
         if (mode === 'smtp') {
             return smtpTabSchema;
         }
-        if (mode === 'one_click') {
-            return oneClickTabSchema;
-        }
-        if (mode === 'app_permission') {
-            return appPermissionTabSchema;
+        if (isExtensionMode) {
+            return extensionModeSchema;
         }
         return apiTabSchema;
-    }, [isMultiMode, genericConnectionSchema, activeDeliveryMode, smtpTabSchema, oneClickTabSchema, appPermissionTabSchema, apiTabSchema]);
+    }, [isMultiMode, genericConnectionSchema, activeDeliveryMode, smtpTabSchema, isExtensionMode, extensionModeSchema, apiTabSchema]);
 
     const smtpAuthEnabled = useMemo(
         () => Boolean(form.settings.authentication),
@@ -697,6 +644,13 @@ export default function ConnectionForm({
     }, [initialData?.id]);
 
     useEffect(() => {
+        if (initialData?.oauth_pending) {
+            setOauthStaged(true);
+            setOauthAccountEmail(initialData.oauth_pending.oauth_account_email || '');
+        }
+    }, [initialData?.oauth_pending]);
+
+    useEffect(() => {
         if (initialData?.settings?.client_id) {
             setCredentialsVerified(true);
         } else {
@@ -705,19 +659,20 @@ export default function ConnectionForm({
     }, [initialData?.id, initialData?.settings?.client_id]);
 
     useEffect(() => {
-        if (!initialData?.settings) {
+        const currentSettings = initialData?.oauth_pending?.settings || initialData?.settings;
+        if (!currentSettings) {
             return;
         }
         setForm((prev) => ({
             ...prev,
             settings: {
                 ...prev.settings,
-                refresh_token: initialData.settings.refresh_token ?? prev.settings.refresh_token,
-                access_token: initialData.settings.access_token ?? prev.settings.access_token,
-                token_expires_at: initialData.settings.token_expires_at ?? prev.settings.token_expires_at,
-                api_domain: initialData.settings.api_domain ?? prev.settings.api_domain,
-                client_id: initialData.settings.client_id ?? prev.settings.client_id,
-                client_secret: initialData.settings.client_secret ?? prev.settings.client_secret,
+                refresh_token: currentSettings.refresh_token ?? prev.settings.refresh_token,
+                access_token: currentSettings.access_token ?? prev.settings.access_token,
+                token_expires_at: currentSettings.token_expires_at ?? prev.settings.token_expires_at,
+                api_domain: currentSettings.api_domain ?? prev.settings.api_domain,
+                client_id: currentSettings.client_id ?? prev.settings.client_id,
+                client_secret: currentSettings.client_secret ?? prev.settings.client_secret,
             },
         }));
     }, [
@@ -726,6 +681,7 @@ export default function ConnectionForm({
         initialData?.settings?.token_expires_at,
         initialData?.settings?.client_id,
         initialData?.settings?.client_secret,
+        initialData?.oauth_pending?.settings,
     ]);
 
     useEffect(() => {
@@ -735,13 +691,82 @@ export default function ConnectionForm({
 
         const url = new URL(window.location.href);
         const params = url.searchParams;
-        const expectedProvider = oauthStatusProvider(driver, activeDeliveryMode);
+        const expectedProvider = oauthStatusProvider(driver);
         const expectedConnectionId = String(initialData?.id ?? oauthConnectionId ?? '');
         let shouldCleanup = false;
 
         const prefillProvider = params.get('oauth_provider');
         const prefillCode = params.get('oauth_code');
         const prefillConnectionId = params.get('oauth_connection_id');
+        const returnedState = params.get('oauth_state');
+        const statusProvider = (params.get('oauth') || params.get('oauth_provider') || '').replace('/', '_');
+        const status = params.get('oauth_status') || params.get('status');
+        const message = params.get('oauth_message') || params.get('message');
+
+        if (isDelegatedHostedOAuth && (prefillCode || status) && !oauthReturnHandledRef.current) {
+            if (statusProvider !== expectedProvider || expectedConnectionId === '' ||
+                (prefillConnectionId && prefillConnectionId !== expectedConnectionId)) {
+                oauthReturnHandledRef.current = true;
+                setOauthFeedback({ kind: 'destructive', message: t('connection_form.oauth_return_mismatch', 'This authorization return does not match the mailer. Please authorize again.') });
+                ['oauth_provider', 'oauth_code', 'oauth_state', 'oauth_connection_id', 'oauth_status', 'oauth_message', 'oauth', 'status', 'message']
+                    .forEach((key) => params.delete(key));
+                window.history.replaceState({}, '', `${url.pathname}${params.toString() ? `?${params.toString()}` : ''}${url.hash}`);
+                return;
+            }
+
+            oauthReturnHandledRef.current = true;
+            setAuthorizeClicked(false);
+            const finishReturn = async () => {
+                if (status !== 'success' && !prefillCode) {
+                    setOauthFeedback({ kind: 'destructive', message: message || t('connection_form.oauth_authorization_cancelled', 'Authorization was cancelled. You can try again.') });
+                    return;
+                }
+
+                setTokenSaveBusy(true);
+                setOauthFeedback({ kind: 'info', message: t('connection_form.oauth_finishing', 'Finishing account authorization…') });
+                try {
+                    if (prefillCode) {
+                        if (!returnedState || prefillConnectionId !== expectedConnectionId) {
+                            throw new Error(t('connection_form.oauth_return_invalid', 'The authorization return could not be verified. Please authorize again.'));
+                        }
+                        await api.post(`connections/${expectedConnectionId}/oauth-token`, {
+                            token: prefillCode,
+                            oauth_state: returnedState,
+                            delivery_mode: 'api',
+                        });
+                    }
+                    const res = await api.get(`connections/${expectedConnectionId}`);
+                    const connection = res.data ?? res;
+                    const authorized = oauthStaged
+                        ? connection?.oauth_pending?.oauth_refresh_available
+                        : connection?.oauth_refresh_available;
+                    if (!authorized) {
+                        throw new Error(t('connection_form.oauth_refresh_missing', 'The account did not provide a lasting authorization. Please authorize again.'));
+                    }
+                    setOauthReturnConnected(true);
+                    setOauthRequiresReconnect(false);
+                    setOauthAccountEmail(oauthStaged
+                        ? (connection.oauth_pending?.oauth_account_email || '')
+                        : (connection.oauth_account_email || ''));
+                    setCredentialsVerified(true);
+                    setOauthFeedback({ kind: 'success', message: t('connection_form.oauth_account_connected', '{{provider}} account connected. Save Mailer to finish setup.', { provider: providerDisplayName }) });
+                    if (typeof onRemoteSettingsUpdated === 'function') {
+                        await onRemoteSettingsUpdated();
+                    }
+                } catch (error) {
+                    setOauthFeedback({ kind: 'destructive', message: error instanceof Error ? error.message : t('connection_form.oauth_authorization_failed', 'Authorization could not be completed. Please try again.') });
+                } finally {
+                    setTokenSaveBusy(false);
+                }
+            };
+
+            ['oauth_provider', 'oauth_code', 'oauth_state', 'oauth_connection_id', 'oauth_status', 'oauth_message', 'oauth', 'status', 'message']
+                .forEach((key) => params.delete(key));
+            window.history.replaceState({}, '', `${url.pathname}${params.toString() ? `?${params.toString()}` : ''}${url.hash}`);
+            void finishReturn();
+            return;
+        }
+
         if (
             prefillProvider === expectedProvider &&
             prefillCode &&
@@ -757,9 +782,6 @@ export default function ConnectionForm({
             shouldCleanup = true;
         }
 
-        const statusProvider = (params.get('oauth') || params.get('oauth_provider') || '').replace('/', '_');
-        const status = params.get('oauth_status') || params.get('status');
-        const message = params.get('oauth_message') || params.get('message');
         if (statusProvider === expectedProvider && status) {
             if (status === 'success') {
                 setCredentialsVerified(true);
@@ -783,9 +805,13 @@ export default function ConnectionForm({
             .forEach((key) => params.delete(key));
         const nextUrl = `${url.pathname}${params.toString() ? `?${params.toString()}` : ''}${url.hash}`;
         window.history.replaceState({}, '', nextUrl);
-    }, [driver, initialData, oauthConnectionId, onRemoteSettingsUpdated, activeDeliveryMode]);
+    }, [driver, initialData, oauthConnectionId, onRemoteSettingsUpdated, activeDeliveryMode, isDelegatedHostedOAuth, oauthStaged, providerDisplayName, t]);
 
     const updateSettings = (key, value) => {
+        if (isDelegatedHostedOAuth && ['client_id', 'client_secret', 'tenant_id', 'from_email'].includes(key)) {
+            setOauthRequiresReconnect(true);
+            setOauthFeedback(null);
+        }
         setForm(prev => ({
             ...prev,
             settings: { ...prev.settings, [key]: value }
@@ -961,12 +987,11 @@ export default function ConnectionForm({
         setSettingsTouched(prev => ({ ...prev, [key]: true }));
     }, []);
 
-    const oauthConnected = hasStoredOAuthTokens(form.settings) || hasOAuthStatus(initialData);
-    const oneClickToken = String(form.settings?.one_click_bearer_token || '').trim();
-    const oneClickConnected = oneClickToken !== '';
-    const oneClickStatus = String(form.settings?.one_click_status || (oneClickConnected ? 'connected' : 'not_connected'));
-    const oneClickMaskedToken = maskTokenPreview(oneClickToken);
-    const canStartOneClickAuthorize = isLikelyEmail(form.settings?.from_email || '');
+    const oauthConnected = !oauthRequiresReconnect && (isDelegatedHostedOAuth
+        ? (oauthStaged
+            ? (oauthReturnConnected || Boolean(initialData?.oauth_pending?.oauth_refresh_available))
+            : (oauthReturnConnected || Boolean(initialData?.oauth_refresh_available)))
+        : (hasStoredOAuthTokens(form.settings) || hasOAuthStatus(initialData)));
     const supportsKeyStore = Boolean(connectionSchema?.key_store);
     const supportsCredentialStorageTabs = supportsKeyStore && (isMultiMode || driver === 'smtp');
     const activeKeyStore = form.settings.key_store || 'db';
@@ -987,9 +1012,9 @@ export default function ConnectionForm({
     );
     const shouldSaveTokenWithSubmit = useMemo(() => {
         const mode = activeDeliveryMode;
-        const supportsInlineTokenSave = mode === 'api' || mode === 'one_click';
-        return isOAuthDriver && supportsInlineTokenSave && !!pastedToken.trim();
-    }, [isOAuthDriver, activeDeliveryMode, pastedToken]);
+        const supportsInlineTokenSave = mode === 'api';
+        return isOAuthDriver && !isDelegatedHostedOAuth && supportsInlineTokenSave && !!pastedToken.trim();
+    }, [isOAuthDriver, isDelegatedHostedOAuth, activeDeliveryMode, pastedToken]);
 
 
     const handleSave = async () => {
@@ -1011,6 +1036,10 @@ export default function ConnectionForm({
             setWpConfigAckError(true);
             return;
         }
+        if (isDelegatedHostedOAuth && !oauthConnected) {
+            setOauthFeedback({ kind: 'warning', message: t('connection_form.oauth_authorize_before_save', 'Authorize the account before saving this mailer.') });
+            return;
+        }
 
         const apiMode = activeDeliveryMode === 'api';
         if (
@@ -1025,12 +1054,6 @@ export default function ConnectionForm({
             return;
         }
 
-        const hasOneClickToken = String(form.settings?.one_click_bearer_token || '').trim() !== '';
-        if (isOneClickMode && !hasOneClickToken && !pastedToken.trim()) {
-            setOauthInlineMessage(t('connection_form.complete_one_click_before_save', 'Complete One Click connection or paste a bearer token before saving.'));
-            return;
-        }
-
         const isEditMode = Boolean(initialData?.id);
         const nextSettings = driver === 'ses'
             ? buildSesSubmitSettings(form.settings)
@@ -1040,7 +1063,35 @@ export default function ConnectionForm({
             settings: nextSettings,
             priority: Number(form.priority || 0),
             connection_id: oauthConnectionId || null,
+            ...(((isDelegatedHostedOAuth || driver === 'ses') && !initialData?.id && oauthConnectionId) ? { is_active: true } : {}),
         };
+
+        if (isDelegatedHostedOAuth && oauthStaged && initialData?.is_active) {
+            setTokenSaveBusy(true);
+            setOauthFeedback(null);
+            try {
+                await api.post(`connections/${oauthConnectionId}/oauth-stage`, {
+                    name: payload.name,
+                    driver,
+                    settings: payload.settings,
+                    priority: payload.priority,
+                });
+                const stagedResponse = await api.get(`connections/${oauthConnectionId}`);
+                const stagedConnection = stagedResponse.data ?? stagedResponse;
+                if (!stagedConnection?.oauth_pending?.oauth_refresh_available) {
+                    setOauthReturnConnected(false);
+                    setOauthFeedback({ kind: 'warning', message: t('connection_form.oauth_reauthorize_after_app_change', 'The app credentials changed. Authorize the account again before saving.') });
+                    return;
+                }
+                await api.post(`connections/${oauthConnectionId}/oauth-finalize`);
+                navigate('/connections');
+            } catch (error) {
+                setOauthFeedback({ kind: 'destructive', message: error instanceof Error ? error.message : t('connection_form.failed_save_mailer', 'Could not save the mailer.') });
+            } finally {
+                setTokenSaveBusy(false);
+            }
+            return;
+        }
 
         if (shouldSaveTokenWithSubmit) {
             const cid = oauthConnectionId;
@@ -1056,7 +1107,7 @@ export default function ConnectionForm({
                 const shouldVerifyCredentials = !(
                     driver === 'outlook' &&
                     isEditMode
-                ) && !isLikelyMaskedSecretPlaceholder(rawClientSecret) && !isOneClickMode;
+                ) && !isLikelyMaskedSecretPlaceholder(rawClientSecret);
 
                 // Edit/reconnect often has masked secret placeholder in UI.
                 // Skip verify in that case and use the server-stored secret.
@@ -1067,9 +1118,6 @@ export default function ConnectionForm({
                     };
                     if (driver === 'outlook') {
                         verifyBody.tenant_id = form.settings.tenant_id || 'common';
-                    }
-                    if (driver === 'zoho') {
-                        verifyBody.region = form.settings.region || 'us';
                     }
                     await api.post(`connections/${cid}/verify-credentials`, verifyBody);
                 }
@@ -1203,14 +1251,14 @@ export default function ConnectionForm({
             let cid = oauthConnectionId;
             if (!cid) {
                 if (!form.settings?.from_email || String(form.settings.from_email).trim() === '') {
-                    setValidateSesResult({ ok: false, message: t('connection_form.from_email_required_sender_settings', 'From Email is required (see Sender Settings).') });
+                    setValidateSesResult({ ok: false, message: t('connection_form.from_email_required_connection_details', 'From Email is required (see Connection Details).') });
                     return;
                 }
                 const createRes = await api.post('connections', {
                     name: form.name,
                     driver,
                     settings: buildSesSubmitSettings(form.settings),
-                    is_active: form.is_active ?? true,
+                    is_active: false,
                 });
                 const payload = createRes.data ?? createRes;
                 cid = payload?.id ?? payload?.data?.id;
@@ -1218,6 +1266,7 @@ export default function ConnectionForm({
                     throw new Error(t('connection_form.failed_create_connection_draft', 'Failed to create connection draft.'));
                 }
                 setOauthConnectionId(cid);
+                setForm(previous => ({ ...previous, is_active: false }));
             }
 
             const mode = form.settings?.delivery_mode || 'api';
@@ -1236,15 +1285,21 @@ export default function ConnectionForm({
                 secret,
                 region,
                 delivery_mode: mode,
+                from_email: String(form.settings?.from_email || '').trim(),
             });
             const payload = res.data ?? res;
+            const quota = payload?.max_24_hour_send;
+            const sent = payload?.sent_last_24_hours;
+            const quotaDetails = quota != null && sent != null
+                ? t('connection_form.ses_quota_details', '24-hour quota: {{quota}}; sent in the last 24 hours: {{sent}}.', { quota, sent })
+                : t('connection_form.ses_quota_unavailable', 'Quota details were not returned.');
             setValidateSesResult({
                 ok: true,
-                message: t(
-                    'connection_form.ses_credentials_valid',
-                    'Valid — AWS accepted these credentials. 24h quota: {{quota}}, sent today: {{sent}}.',
-                    { quota: payload?.max_24_hour_send ?? '?', sent: payload?.sent_last_24_hours ?? '?' }
-                ),
+                message: t('connection_form.ses_credentials_valid', 'AWS accepted these credentials for SES in {{region}}. {{quotaDetails}}', {
+                    region: payload?.region || region,
+                    quotaDetails,
+                }),
+                identity: payload?.identity ?? null,
             });
         } catch (e) {
             setValidateSesResult({
@@ -1256,16 +1311,64 @@ export default function ConnectionForm({
         }
     }, [oauthConnectionId, form.name, form.is_active, form.settings, driver, t]);
 
+    const saveDelegatedOAuthDraft = useCallback(async () => {
+        if (nameValidationMessage || fromEmailValidationMessage || fromNameValidationMessage ||
+            !String(form.settings.client_id || '').trim() || !String(form.settings.client_secret || '').trim()) {
+            setNameTouched(true);
+            setFromEmailTouched(true);
+            setFromNameTouched(true);
+            setSettingsTouched({ client_id: true, client_secret: true, tenant_id: true });
+            throw new Error(t('connection_form.oauth_complete_details', 'Complete the connection and app details before authorizing.'));
+        }
+
+        const wasNew = !oauthConnectionId;
+        const body = {
+            name: form.name,
+            driver,
+            settings: { ...form.settings, delivery_mode: 'api' },
+            priority: Number(form.priority || 0),
+            is_active: initialData?.id ? form.is_active : false,
+        };
+        const stageActiveEdit = Boolean(initialData?.id && initialData?.is_active);
+        const response = stageActiveEdit
+            ? await api.post(`connections/${oauthConnectionId}/oauth-stage`, {
+                name: body.name,
+                driver: body.driver,
+                settings: body.settings,
+                priority: body.priority,
+            })
+            : oauthConnectionId
+                ? await api.put(`connections/${oauthConnectionId}`, body)
+                : await api.post('connections', body);
+        const payload = response.data ?? response;
+        const id = payload?.id ?? payload?.data?.id ?? oauthConnectionId;
+        if (!id) {
+            throw new Error(t('connection_form.failed_create_connection_draft', 'Failed to create connection draft.'));
+        }
+        setOauthConnectionId(id);
+        if (stageActiveEdit) {
+            setOauthStaged(true);
+        }
+        if (wasNew) {
+            setForm(previous => ({ ...previous, is_active: false }));
+        }
+        return id;
+    }, [nameValidationMessage, fromEmailValidationMessage, fromNameValidationMessage, form, driver, initialData?.id, oauthConnectionId, t]);
+
     const handleVerifyCredentials = useCallback(async () => {
         let cid = oauthConnectionId;
         setVerifyBusy(true);
         setVerifyMessage('');
+        setVerifyResult(null);
         try {
+            if (isDelegatedHostedOAuth) {
+                cid = await saveDelegatedOAuthDraft();
+            }
             // On the "new" page there is no connection id yet; create a draft so verify/token can run.
             if (!cid) {
-                // Preflight: multi-mode API validation requires Sender Settings `from_email` too.
+                // Preflight: multi-mode API validation requires Connection Details `from_email` too.
                 if (!form.settings?.from_email || String(form.settings.from_email).trim() === '') {
-                    setVerifyMessage(t('connection_form.from_email_required_sender_settings', 'From Email is required (see Sender Settings).'));
+                    setVerifyMessage(t('connection_form.from_email_required_connection_details', 'From Email is required (see Connection Details).'));
                     return;
                 }
                 if (!isLikelyEmail(form.settings.from_email)) {
@@ -1282,15 +1385,12 @@ export default function ConnectionForm({
                 if (driver === 'outlook') {
                     draftSettings.tenant_id = draftSettings.tenant_id || 'common';
                 }
-                if (driver === 'zoho') {
-                    draftSettings.region = draftSettings.region || 'us';
-                }
 
                 const createRes = await api.post('connections', {
                     name: form.name,
                     driver,
                     settings: draftSettings,
-                    is_active: form.is_active || true,
+                    is_active: form.is_active ?? true,
                 });
                 const payload = createRes.data ?? createRes;
                 cid = payload?.id ?? payload?.data?.id;
@@ -1307,12 +1407,21 @@ export default function ConnectionForm({
             if (driver === 'outlook') {
                 body.tenant_id = form.settings.tenant_id || 'common';
             }
-            if (driver === 'zoho') {
-                body.region = form.settings.region || 'us';
-            }
-            await api.post(`connections/${cid}/verify-credentials`, body);
+            const verification = await api.post(`connections/${cid}/verify-credentials`, body);
+            const details = verification.data ?? verification;
             setCredentialsVerified(true);
-            setVerifyMessage(t('connection_form.credentials_verified_saved', 'Credentials verified and saved.'));
+            if (isDelegatedHostedOAuth) {
+                setVerifyResult(details?.verification_hint
+                    ? { kind: 'warning', message: details.verification_hint }
+                    : {
+                        kind: 'info',
+                        message: driver === 'outlook'
+                            ? t('connection_form.microsoft_app_accepted', 'Microsoft accepted the app credentials. Authorize the mailbox to continue.')
+                            : t('connection_form.google_app_saved', 'App details saved. Authorize your Google account to continue.'),
+                    });
+            } else {
+                setVerifyMessage(t('connection_form.credentials_verified_saved', 'Credentials verified and saved.'));
+            }
             if (typeof onRemoteSettingsUpdated === 'function') {
                 await onRemoteSettingsUpdated();
             } else {
@@ -1325,50 +1434,42 @@ export default function ConnectionForm({
                     }));
                 }
             }
+            if (isDelegatedHostedOAuth && !initialData?.id) {
+                navigate(`/connections/${cid}`, { replace: true });
+            }
         } catch (e) {
-            setVerifyMessage(e instanceof Error ? e.message : t('connection_form.verify_failed', 'Verify failed.'));
+            const message = e instanceof Error ? e.message : t('connection_form.verify_failed', 'Verify failed.');
+            if (isDelegatedHostedOAuth) {
+                setVerifyResult({ kind: 'destructive', message });
+            } else {
+                setVerifyMessage(message);
+            }
         } finally {
             setVerifyBusy(false);
         }
-    }, [oauthConnectionId, form.name, form.is_active, form.settings, driver, onRemoteSettingsUpdated, t]);
+    }, [oauthConnectionId, form.name, form.is_active, form.settings, driver, onRemoteSettingsUpdated, t, isDelegatedHostedOAuth, saveDelegatedOAuthDraft, initialData?.id, navigate]);
 
     const openAuthorize = useCallback(async () => {
         let cid = oauthConnectionId;
         setAuthorizeBusy(true);
+        setOauthFeedback(null);
         try {
+            if (isDelegatedHostedOAuth) {
+                cid = await saveDelegatedOAuthDraft();
+                const res = await api.get(`${oauthAuthorizePath(driver)}/authorize`, { connection_id: cid });
+                const url = res.data?.authorization_url;
+                const target = url ? new URL(url, window.location.href) : null;
+                if (!target || (target.protocol !== 'https:' && !(target.protocol === 'http:' && target.origin === window.location.origin))) {
+                    throw new Error(t('connection_form.oauth_url_invalid', 'The authorization URL was unavailable. Please try again.'));
+                }
+                window.location.assign(target.href);
+                return;
+            }
             if (!cid) {
-                if (!isOneClickMode) {
-                    return;
-                }
-
-                if (!form.settings?.from_email || String(form.settings.from_email).trim() === '') {
-                    setOauthInlineMessage(t('connection_form.from_email_required_before_one_click', 'From Email is required (Sender Settings) before starting One Click connection.'));
-                    return;
-                }
-                if (!isLikelyEmail(form.settings.from_email)) {
-                    setOauthInlineMessage(t('connection_form.from_email_valid_before_one_click', 'From Email must be a valid email address before starting One Click connection.'));
-                    return;
-                }
-
-                const createRes = await api.post('connections', {
-                    name: form.name,
-                    driver,
-                    settings: {
-                        ...form.settings,
-                        delivery_mode: 'one_click',
-                    },
-                    is_active: form.is_active || true,
-                });
-
-                const payload = createRes.data ?? createRes;
-                cid = payload?.id ?? payload?.data?.id;
-                if (!cid) {
-                    throw new Error(t('connection_form.failed_create_draft_one_click', 'Failed to create connection draft for One Click authorization.'));
-                }
-                setOauthConnectionId(cid);
+                return;
             }
 
-            const path = oauthAuthorizePath(driver, activeDeliveryMode);
+            const path = oauthAuthorizePath(driver);
             const res = await api.get(`${path}/authorize`, { connection_id: cid });
             const url = res.data?.authorization_url;
             if (url) {
@@ -1376,38 +1477,40 @@ export default function ConnectionForm({
                 setAuthorizeClicked(true);
             }
         } catch (e) {
-            toast.error(e instanceof Error ? e.message : t('connection_form.oauth_request_failed', 'OAuth request failed.'));
+            const message = e instanceof Error ? e.message : t('connection_form.oauth_request_failed', 'OAuth request failed.');
+            if (isDelegatedHostedOAuth) {
+                setOauthFeedback({ kind: 'destructive', message });
+                if (cid && !initialData?.id) {
+                    navigate(`/connections/${cid}`, { replace: true });
+                }
+            } else {
+                toast.error(message);
+            }
         } finally {
             setAuthorizeBusy(false);
         }
-    }, [oauthConnectionId, driver, activeDeliveryMode, isOneClickMode, form.name, form.is_active, form.settings, t]);
+    }, [oauthConnectionId, driver, isDelegatedHostedOAuth, saveDelegatedOAuthDraft, initialData?.id, navigate, t]);
 
     /**
-     * Whether to show the "Grant admin consent for your organization" shortcut (MS-007) --
+     * Whether to show the "Grant admin consent for your organization" shortcut --
      * Microsoft's `/v2.0/adminconsent` endpoint lets one tenant admin approve the app for the
      * whole org in one step instead of every mailbox owner consenting individually. Only makes
-     * sense once a real tenant is in play: delegated `api` mode with a non-default Tenant ID, or
-     * Pro's `app_permission` mode, where admin consent isn't just convenient but mandatory (an
-     * Application permission grant has no per-user consent path at all).
+     * sense once a real tenant is in play: delegated `api` mode with a non-default Tenant ID.
      */
     const canGrantAdminConsent = useMemo(() => {
         if (driver !== 'outlook') {
             return false;
-        }
-        if (activeDeliveryMode === 'app_permission') {
-            return Boolean(String(form.settings.app_tenant_id || '').trim()) && Boolean(String(form.settings.app_client_id || '').trim());
         }
         if (activeDeliveryMode === 'api') {
             const tenant = String(form.settings.tenant_id || 'common').trim().toLowerCase();
             return tenant !== '' && !['common', 'organizations', 'consumers'].includes(tenant) && Boolean(String(form.settings.client_id || '').trim());
         }
         return false;
-    }, [driver, activeDeliveryMode, form.settings.app_tenant_id, form.settings.app_client_id, form.settings.tenant_id, form.settings.client_id]);
+    }, [driver, activeDeliveryMode, form.settings.tenant_id, form.settings.client_id]);
 
     const openAdminConsent = useCallback(() => {
-        const isAppPermission = activeDeliveryMode === 'app_permission';
-        const tenant = String((isAppPermission ? form.settings.app_tenant_id : form.settings.tenant_id) || '').trim();
-        const clientId = String((isAppPermission ? form.settings.app_client_id : form.settings.client_id) || '').trim();
+        const tenant = String(form.settings.tenant_id || '').trim();
+        const clientId = String(form.settings.client_id || '').trim();
         if (tenant === '' || clientId === '') {
             return;
         }
@@ -1420,7 +1523,7 @@ export default function ConnectionForm({
         });
         const url = `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/v2.0/adminconsent?${query.toString()}`;
         window.open(url, '_blank', 'noopener,noreferrer');
-    }, [activeDeliveryMode, form.settings.app_tenant_id, form.settings.app_client_id, form.settings.tenant_id, form.settings.client_id]);
+    }, [form.settings.tenant_id, form.settings.client_id]);
 
     const adminConsentBlock = canGrantAdminConsent && (
         <Field className="max-w-2xl gap-1.5">
@@ -1439,23 +1542,24 @@ export default function ConnectionForm({
         return <ConnectionFormSkeleton />;
     }
 
-    const SetupGuide = getSetupGuideComponent(driver);
-    const saveButtonLabel = shouldSaveTokenWithSubmit
+    // A mode another plugin provides explains its own sign-in in its panel; the provider's API guide would mislead.
+    const SetupGuide = isExtensionMode ? null : getSetupGuideComponent(driver);
+    const saveButtonLabel = isDelegatedHostedOAuth
+        ? t('connection_form.save_mailer', 'Save Mailer')
+        : shouldSaveTokenWithSubmit
         ? (initialData ? t('connection_form.save_token_update', 'Save Token and Update') : t('connection_form.save_token_register', 'Save Token and Register'))
         : (initialData ? t('connection_form.update_connection', 'Update Connection') : t('connection_form.register_connection', 'Register Connection'));
 
-    const oauthTokenCapture = authorizeClicked && (
+    const oauthTokenCapture = authorizeClicked && !isDelegatedHostedOAuth && (
         <div className="max-w-2xl space-y-2 pt-2">
             <Separator />
             <div className="space-y-2 rounded-md border border-dashed p-3">
                 <Field className="gap-1">
                     <FieldLabel htmlFor="oauth-pasted-token" className="text-muted-foreground">
-                        {isOneClickMode ? t('connection_form.one_click_bearer_token', 'One Click bearer token') : t('connection_form.token_from_provider', 'Token from provider')}
+                        {t('connection_form.token_from_provider', 'Token from provider')}
                     </FieldLabel>
                     <FieldDescription className="text-xs leading-relaxed">
-                        {isOneClickMode
-                            ? t('connection_form.one_click_token_help', 'After One Click authorization in the new tab, paste the returned bearer token here if it is not auto-saved.')
-                            : t('connection_form.oauth_token_help', 'After authorizing in the new tab, copy the code shown on the callback page or use the return button there to prefill it here.')}
+                        {t('connection_form.oauth_token_help', 'After authorizing in the new tab, copy the code shown on the callback page or use the return button there to prefill it here.')}
                     </FieldDescription>
                     <Textarea
                         id="oauth-pasted-token"
@@ -1463,7 +1567,7 @@ export default function ConnectionForm({
                         onChange={(e) => setPastedToken(e.target.value)}
                         rows={2}
                         className="resize-y font-mono text-xs"
-                        placeholder={isOneClickMode ? t('connection_form.paste_one_click_token', 'Paste One Click bearer token') : t('connection_form.paste_authorization_or_refresh_token', 'Paste authorization code or refresh token')}
+                        placeholder={t('connection_form.paste_authorization_or_refresh_token', 'Paste authorization code or refresh token')}
                     />
                     <FieldDescription className="text-xs">
                         {t('connection_form.token_saved_main_button', 'Token will be saved when you click the main button below.')}
@@ -1477,41 +1581,61 @@ export default function ConnectionForm({
     );
 
     return (
-        <div>
-            {Boolean(window.BooleanSmtpAdmin?.debug) && error && (
-                <Alert variant="destructive" className="mb-6">
+        <div className="space-y-4">
+            {error && (
+                <Alert variant="destructive">
                     <AlertCircle />
                     <AlertDescription>{error}</AlertDescription>
                 </Alert>
             )}
 
-            <div className="flex min-h-screen flex-col items-start lg:flex-row">
-                {/* Main Form Area */}
-                <div className="w-full flex-1 space-y-8 pb-20 lg:pr-10">
-                    {/* Provider Row */}
-                    <div className="space-y-4">
-                        <p className="text-sm font-medium text-muted-foreground">{t('connection_form.provider', 'Connection Provider')}</p>
-                        <div className="flex items-center gap-4">
-                            <div className="relative flex h-22 w-44 items-center justify-center rounded-lg border-2 border-primary bg-muted p-4">
-                                <div className="absolute -top-2.5 -right-2.5 rounded-full border-2 border-primary bg-background p-0.5">
-                                    <CheckCircle2 className="size-4 fill-primary/10 text-primary" />
-                                </div>
-                                {provider.logo ? (
-                                    <img src={provider.logo} alt={providerDisplayName} className="size-full object-contain" />
-                                ) : (
-                                    <div className="scale-110 transform">{provider.icon}</div>
-                                )}
+            <header className="flex w-full" data-testid="connection-form-header">
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-4 lg:pr-10" data-testid="connection-form-header-main">
+                    <div className="flex flex-col items-start gap-1">
+                        <Link to="/connections" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+                            <ChevronLeft className="size-4" />
+                            {t('connection_form.back_to_mailers', 'Back to Mailers')}
+                        </Link>
+                        <h1 className="text-xl font-semibold">
+                            {initialData
+                                ? t('connection_form.edit_connection', 'Edit Connection')
+                                : t('connection_form.new_connection', 'New Connection')}
+                        </h1>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                        {!initialData && (
+                            <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+                                <Pencil />
+                                {t('connection_form.change_mailer', 'Change Mailer')}
+                            </Button>
+                        )}
+                        <div className="relative hidden h-14 w-28 items-center justify-center rounded-lg border-2 border-primary bg-muted p-2.5 lg:flex">
+                            <div className="absolute -top-2 -right-2 rounded-full border-2 border-primary bg-background p-0.5">
+                                <CheckCircle2 className="size-3.5 fill-primary/10 text-primary" />
                             </div>
-                            {!initialData && (
-                                <Button type="button" variant="outline" size="sm" onClick={onCancel}>
-                                    <Pencil />
-                                    {t('connection_form.change', 'Change')}
-                                </Button>
+                            {provider.logo ? (
+                                <img src={provider.logo} alt={providerDisplayName} className="size-full object-contain" />
+                            ) : (
+                                <div className="scale-110 transform">{provider.icon}</div>
                             )}
                         </div>
+                    </div>
+                </div>
+                <div className="hidden w-[380px] shrink-0 lg:block" aria-hidden="true" data-testid="connection-form-header-empty" />
+            </header>
 
-                        <Card>
-                            <CardContent>
+            <div className="flex min-h-screen flex-col items-start lg:flex-row" data-testid="connection-form-columns">
+                {/* Main Form Area */}
+                <div className="w-full flex-1 space-y-8 pb-20 lg:min-w-0 lg:pr-10">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Send className="size-4 text-primary" />
+                                {t('connection_form.connection_details', 'Connection Details')}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-5">
                                 <Field className="max-w-md gap-1.5" data-invalid={Boolean(nameFieldError) || undefined}>
                                     <FieldLabel htmlFor="connection-name" className="text-muted-foreground">{t('connection_form.name', 'Connection Name')}</FieldLabel>
                                     <Input
@@ -1525,33 +1649,21 @@ export default function ConnectionForm({
                                     />
                                     {nameFieldError && <FieldError className="text-xs">{nameFieldError}</FieldError>}
                                 </Field>
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* Card 1: Sender Settings */}
-                    <Card>
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Send className="size-4 text-primary" />
-                                {t('connection_form.sender_settings', 'Sender Settings')}
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <DynamicSettingsForm
-                                schema={senderSchema}
-                                values={form.settings}
-                                onChange={updateSettings}
-                                errors={senderErrors}
-                                onFieldBlur={(key) => {
-                                    if (key === 'from_email') {
-                                        setFromEmailTouched(true);
-                                    }
-                                    if (key === 'from_name') {
-                                        setFromNameTouched(true);
-                                    }
-                                }}
-                            />
+                                <DynamicSettingsForm
+                                    schema={senderSchema}
+                                    values={form.settings}
+                                    onChange={updateSettings}
+                                    errors={senderErrors}
+                                    onFieldBlur={(key) => {
+                                        if (key === 'from_email') {
+                                            setFromEmailTouched(true);
+                                        }
+                                        if (key === 'from_name') {
+                                            setFromNameTouched(true);
+                                        }
+                                    }}
+                                />
+                            </div>
 
                             {senderConflict?.id && senderErrors.from_email ? (
                                 <div className="mt-2 flex flex-col gap-1 text-xs" data-testid="sender-conflict">
@@ -1561,11 +1673,6 @@ export default function ConnectionForm({
                                     >
                                         {t('connection_form.sender_conflict_edit', "Edit '{{name}}'", { name: senderConflict.name })}
                                     </Link>
-                                    {!isProLicensed ? (
-                                        <p className="text-muted-foreground">
-                                            {t('connection_form.sender_conflict_pro', 'Sending one address through several providers, with failover or load balancing, is part of BooleanSMTP Pro.')}
-                                        </p>
-                                    ) : null}
                                 </div>
                             ) : null}
 
@@ -1630,7 +1737,6 @@ export default function ConnectionForm({
                                                 updateSettings('delivery_mode', m);
                                             }}
                                         />
-                                        <ProModeGateBanner activeMode={activeDeliveryMode} />
 
                                         {supportsCredentialStorageTabs && credentialStorageToggle}
 
@@ -1656,24 +1762,6 @@ export default function ConnectionForm({
                                                     sesWpConfigBlock
                                                 ) : (
                                                     <>
-                                                        {driver === 'zoho' && (
-                                                            <div className="grid md:grid-cols-2 gap-4">
-                                                                <DynamicSettingsForm
-                                                                    schema={pickSchema(zohoApiCredentialSchema, ['client_id'])}
-                                                                    values={form.settings}
-                                                                    onChange={updateSettings}
-                                                                    errors={visibleSettingsErrors}
-                                                                    onFieldBlur={handleSettingsBlur}
-                                                                />
-                                                                <DynamicSettingsForm
-                                                                    schema={pickSchema(zohoApiCredentialSchema, ['client_secret'])}
-                                                                    values={form.settings}
-                                                                    onChange={updateSettings}
-                                                                    errors={visibleSettingsErrors}
-                                                                    onFieldBlur={handleSettingsBlur}
-                                                                />
-                                                            </div>
-                                                        )}
                                                         <DynamicSettingsForm
                                                             schema={apiTabSchema}
                                                             values={form.settings}
@@ -1717,28 +1805,52 @@ export default function ConnectionForm({
                                                 {isOAuthDriver && !isWpConfigMode && (oauthConnected ? (
                                                     <Alert variant="success">
                                                         <CheckCircle2 />
-                                                        <AlertTitle>{t('connection_form.oauth_tokens_stored', 'OAuth tokens are stored for this connection.')}</AlertTitle>
+                                                        <AlertTitle>{isDelegatedHostedOAuth
+                                                            ? t('connection_form.oauth_account_ready', 'Account connected')
+                                                            : t('connection_form.oauth_tokens_stored', 'OAuth tokens are stored for this connection.')}</AlertTitle>
                                                         <AlertDescription className="w-full">
+                                                            {isDelegatedHostedOAuth && (oauthAccountEmail || initialData?.oauth_account_email) && (
+                                                                <p>{t('connection_form.oauth_account_email', 'Authorized account: {{email}}', { email: oauthAccountEmail || initialData.oauth_account_email })}</p>
+                                                            )}
+                                                            {isDelegatedHostedOAuth && oauthFeedback?.kind === 'success' && (
+                                                                <p className="mt-1">{oauthFeedback.message}</p>
+                                                            )}
                                                             <div className="mt-2 flex flex-wrap items-center gap-3">
+                                                                {!(isDelegatedHostedOAuth && driver === 'google') && (
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        disabled={verifyBusy}
+                                                                        onClick={handleVerifyCredentials}
+                                                                    >
+                                                                        {verifyBusy ? <Spinner /> : <CheckCircle2 />}
+                                                                        {verifyBusy
+                                                                            ? t('connection_form.verifying', 'Checking…')
+                                                                            : isDelegatedHostedOAuth
+                                                                                ? t('connection_form.check_app_credentials', 'Check app credentials')
+                                                                                : t('connection_form.reverify_credentials', 'Re-verify credentials')}
+                                                                    </Button>
+                                                                )}
                                                                 <Button
                                                                     type="button"
-                                                                    variant="outline"
-                                                                    disabled={verifyBusy}
-                                                                    onClick={handleVerifyCredentials}
-                                                                >
-                                                                    {verifyBusy ? <Spinner /> : <CheckCircle2 />}
-                                                                    {verifyBusy ? t('connection_form.verifying', 'Verifying…') : t('connection_form.reverify_credentials', 'Re-verify credentials')}
-                                                                </Button>
-                                                                <Button
-                                                                    type="button"
-                                                                    disabled={authorizeBusy || !oauthConnectionId}
+                                                                    disabled={authorizeBusy || tokenSaveBusy}
                                                                     onClick={openAuthorize}
                                                                 >
                                                                     {authorizeBusy ? <Spinner /> : <Zap />}
                                                                     {authorizeBusy ? t('connection_form.opening', 'Opening…') : t('connection_form.reconnect_account', 'Reconnect account')}
                                                                 </Button>
                                                             </div>
-                                                            {verifyMessage && (
+                                                            {verifyResult && isDelegatedHostedOAuth && (
+                                                                <Alert variant={verifyResult.kind} className="mt-3">
+                                                                    <AlertDescription>{verifyResult.message}</AlertDescription>
+                                                                </Alert>
+                                                            )}
+                                                            {isDelegatedHostedOAuth && oauthFeedback && oauthFeedback.kind !== 'success' && (
+                                                                <Alert variant={oauthFeedback.kind} className="mt-3">
+                                                                    <AlertDescription>{oauthFeedback.message}</AlertDescription>
+                                                                </Alert>
+                                                            )}
+                                                            {verifyMessage && !isDelegatedHostedOAuth && (
                                                                 <p className="mt-3 text-sm text-muted-foreground">{verifyMessage}</p>
                                                             )}
                                                             {oauthInlineMessage && !authorizeClicked && (
@@ -1750,28 +1862,35 @@ export default function ConnectionForm({
                                                 ) : (
                                                     <>
                                                         <div className="flex flex-wrap items-center gap-3">
-                                                            <Button
-                                                                type="button"
-                                                                variant="outline"
-                                                                disabled={
-                                                                    verifyBusy ||
-                                                                    !form.settings.from_email ||
-                                                                    String(form.settings.from_email).trim() === '' ||
-                                                                    !isLikelyEmail(form.settings.from_email) ||
-                                                                    !form.settings.client_id ||
-                                                                    !form.settings.client_secret
-                                                                }
-                                                                onClick={handleVerifyCredentials}
-                                                            >
-                                                                {verifyBusy ? <Spinner /> : <CheckCircle2 />}
-                                                                {verifyBusy ? t('connection_form.verifying', 'Verifying…') : t('connection_form.verify_credentials', 'Verify credentials')}
-                                                            </Button>
+                                                            {!(isDelegatedHostedOAuth && driver === 'google') && (
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    disabled={
+                                                                        verifyBusy ||
+                                                                        !form.settings.from_email ||
+                                                                        String(form.settings.from_email).trim() === '' ||
+                                                                        !isLikelyEmail(form.settings.from_email) ||
+                                                                        !form.settings.client_id ||
+                                                                        !form.settings.client_secret
+                                                                    }
+                                                                    onClick={handleVerifyCredentials}
+                                                                >
+                                                                    {verifyBusy ? <Spinner /> : <CheckCircle2 />}
+                                                                    {verifyBusy
+                                                                        ? t('connection_form.verifying', 'Checking…')
+                                                                        : isDelegatedHostedOAuth
+                                                                            ? t('connection_form.check_app_credentials', 'Check app credentials')
+                                                                            : t('connection_form.verify_credentials', 'Verify credentials')}
+                                                                </Button>
+                                                            )}
                                                             <Button
                                                                 type="button"
                                                                 disabled={
                                                                     authorizeBusy ||
-                                                                    !oauthConnectionId ||
-                                                                    !credentialsVerified
+                                                                    (!isDelegatedHostedOAuth && (!oauthConnectionId || !credentialsVerified)) ||
+                                                                    tokenSaveBusy ||
+                                                                    (isDelegatedHostedOAuth && (!isLikelyEmail(form.settings.from_email) || !form.settings.client_id || !form.settings.client_secret))
                                                                 }
                                                                 onClick={openAuthorize}
                                                             >
@@ -1779,7 +1898,17 @@ export default function ConnectionForm({
                                                                 {authorizeBusy ? t('connection_form.opening', 'Opening…') : t('connection_form.authorize', 'Authorize')}
                                                             </Button>
                                                         </div>
-                                                        {verifyMessage && (
+                                                        {isDelegatedHostedOAuth && driver === 'google' && (
+                                                            <p className="text-xs text-muted-foreground">
+                                                                {t('connection_form.google_authorize_help', 'Authorize saves your app details as an inactive draft, then opens Google in this tab. Google checks the app during authorization.')}
+                                                            </p>
+                                                        )}
+                                                        {verifyResult && isDelegatedHostedOAuth && (
+                                                            <Alert variant={verifyResult.kind}>
+                                                                <AlertDescription>{verifyResult.message}</AlertDescription>
+                                                            </Alert>
+                                                        )}
+                                                        {verifyMessage && !isDelegatedHostedOAuth && (
                                                             <p
                                                                 className={cn('text-sm', verifyMessage.includes('failed') || verifyMessage.includes('Validation') ? 'text-destructive' : 'text-muted-foreground')}
                                                             >
@@ -1789,13 +1918,24 @@ export default function ConnectionForm({
                                                         {oauthInlineMessage && !authorizeClicked && (
                                                             <p className="text-sm text-muted-foreground">{oauthInlineMessage}</p>
                                                         )}
+                                                        {oauthFeedback && (
+                                                            <Alert variant={oauthFeedback.kind}>
+                                                                <AlertDescription>{oauthFeedback.message}</AlertDescription>
+                                                            </Alert>
+                                                        )}
                                                         {oauthTokenCapture}
                                                     </>
                                                 ))}
                                             </div>
                                         )}
 
-                                        {driver === 'ses' && !isExternalCredentialMode && (
+                                        {driver === 'ses' && currentSesMode === 'smtp' && !isExternalCredentialMode && (
+                                            <p className="text-xs text-muted-foreground">
+                                                {t('connection_form.ses_smtp_test_help', 'Save the mailer, then send a test email to check SMTP authentication and delivery.')}
+                                            </p>
+                                        )}
+
+                                        {driver === 'ses' && currentSesMode === 'api' && !isExternalCredentialMode && (
                                             <div className="space-y-3 pt-2">
                                                 <Separator />
                                                 <div className="flex flex-wrap items-center gap-3">
@@ -1815,31 +1955,33 @@ export default function ConnectionForm({
                                                     </p>
                                                 </div>
                                                 {validateSesResult && (
-                                                    <p className={cn('text-sm', validateSesResult.ok ? 'text-success' : 'text-destructive')}>
-                                                        {validateSesResult.message}
-                                                    </p>
+                                                    <div className="grid gap-2">
+                                                        <Alert variant={validateSesResult.ok ? 'success' : 'destructive'}>
+                                                            {validateSesResult.ok ? <CheckCircle2 /> : <AlertCircle />}
+                                                            <AlertDescription>{validateSesResult.message}</AlertDescription>
+                                                        </Alert>
+                                                        {validateSesResult.ok && (
+                                                            <Alert variant={validateSesResult.identity?.verified ? 'success' : 'warning'}>
+                                                                {validateSesResult.identity?.verified ? <CheckCircle2 /> : <AlertCircle />}
+                                                                <AlertDescription>
+                                                                    {validateSesResult.identity?.verified
+                                                                        ? t('connection_form.ses_sender_verified', 'The From address or its domain is verified in SES.')
+                                                                        : validateSesResult.identity
+                                                                            ? t('connection_form.ses_sender_unverified', 'The From address and its domain are not verified in SES yet.')
+                                                                            : t('connection_form.ses_sender_unknown', 'Sender identity status was unavailable.')}
+                                                                </AlertDescription>
+                                                            </Alert>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
                                         )}
 
-                                        {activeDeliveryMode === 'app_permission' && (
+                                        {isExtensionMode && (
                                             <div className="space-y-6 pt-2">
-                                                <DynamicSettingsForm
-                                                    schema={appPermissionTabSchema}
-                                                    values={form.settings}
-                                                    onChange={updateSettings}
-                                                    errors={visibleSettingsErrors}
-                                                    onFieldBlur={handleSettingsBlur}
-                                                />
-                                                {adminConsentBlock}
-                                            </div>
-                                        )}
-
-                                        {isOneClickMode && (
-                                            <div className="space-y-6 pt-2">
-                                                {Object.keys(oneClickTabSchema).length > 0 && (
+                                                {Object.keys(extensionModeSchema).length > 0 && (
                                                     <DynamicSettingsForm
-                                                        schema={oneClickTabSchema}
+                                                        schema={extensionModeSchema}
                                                         values={form.settings}
                                                         onChange={updateSettings}
                                                         errors={visibleSettingsErrors}
@@ -1847,22 +1989,13 @@ export default function ConnectionForm({
                                                     />
                                                 )}
 
-                                                {/* Both Google's and Microsoft's One Click connect cards are Pro-owned
-                                                    (relocated 2026-09-19; Microsoft's predates this session and was gate-in-place
-                                                    until this relocation) -- renders nothing if Pro isn't installed, which
-                                                    correctly matches the schema no longer offering 'one_click' as a mode at all
-                                                    in that case. */}
+                                                {/* A mode another plugin registers adds its own connect step here. */}
                                                 <ConnectionPanelSlot
                                                     driver={driver}
-                                                    slot="one-click-connect"
-                                                    authorizeBusy={authorizeBusy}
-                                                    canAuthorize={canStartOneClickAuthorize}
-                                                    onAuthorize={openAuthorize}
-                                                    connected={oneClickConnected}
-                                                    status={oneClickStatus}
-                                                    maskedToken={oneClickMaskedToken}
-                                                    inlineMessage={!authorizeClicked ? oauthInlineMessage : ''}
-                                                    tokenCapture={oauthTokenCapture}
+                                                    slot={`mode:${activeDeliveryMode}`}
+                                                    settings={form.settings}
+                                                    onSettingsChange={updateSettings}
+                                                    connectionId={initialData?.id ?? oauthConnectionId ?? null}
                                                 />
                                             </div>
                                         )}
@@ -1906,7 +2039,7 @@ export default function ConnectionForm({
                                                                 <Input
                                                                     id="smtp-port"
                                                                     type="number"
-                                                                    value={form.settings.port ?? 587}
+                                                                    value={form.settings.port}
                                                                     onChange={(e) => updateSettings('port', e.target.value)}
                                                                     onBlur={() => handleSettingsBlur('port')}
                                                                     aria-invalid={Boolean(visibleSettingsErrors?.port)}
@@ -2018,7 +2151,7 @@ export default function ConnectionForm({
                     {/* OAuth Refresh History Panel - developer-only diagnostics, hidden entirely
                         unless a developer opts in with add_filter('boolean_smtp_oauth_debug_ui',
                         '__return_true') -- see AppServiceProvider::adminSpaBootstrapProps(). */}
-                    {Boolean(window.BooleanSmtpAdmin?.oauthDebug) && (initialData?.id || oauthConnectionId) && isOAuthDriver && !isOneClickMode && (
+                    {Boolean(window.BooleanSmtpAdmin?.oauthDebug) && (initialData?.id || oauthConnectionId) && isOAuthDriver && !isExtensionMode && (
                         <div className="overflow-hidden rounded-lg border bg-card">
                             <OAuthRefreshHistoryPanel
                                 connectionId={initialData?.id || oauthConnectionId}
@@ -2065,22 +2198,10 @@ export default function ConnectionForm({
 
                     {/* Actions */}
                     <div className="flex flex-wrap items-center gap-3 pt-4">
-                        {isActiveModeLocked ? (
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    {/* aria-disabled (not `disabled`) keeps the button focusable so the tooltip can explain why saving is blocked. */}
-                                    <Button type="button" size="lg" aria-disabled="true" className="cursor-not-allowed opacity-50">
-                                        {saveButtonLabel}
-                                    </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>{t('connection_form.activate_pro_to_save_mode', 'Activate Pro to save this delivery mode')}</TooltipContent>
-                            </Tooltip>
-                        ) : (
-                            <Button type="button" size="lg" onClick={handleSave} disabled={saving || tokenSaveBusy}>
-                                {saving && <Spinner />}
-                                {saveButtonLabel}
-                            </Button>
-                        )}
+                        <Button type="button" size="lg" onClick={handleSave} disabled={saving || tokenSaveBusy}>
+                            {saving && <Spinner />}
+                            {saveButtonLabel}
+                        </Button>
                         {onTest && initialData && (
                             <Button type="button" variant="outline" size="lg" onClick={() => onTest(form)} disabled={testing || saving}>
                                 {testing && <Spinner />}
@@ -2094,7 +2215,7 @@ export default function ConnectionForm({
                 </div>
 
                 {/* Sidebar: Setup Guide — hidden on mobile, where the vertical space is better spent on the form itself. */}
-                <div className="hidden w-full space-y-6 lg:block lg:w-[380px]">
+                <div className="hidden w-full space-y-6 lg:block lg:w-[380px] lg:shrink-0" data-testid="connection-guide-sidebar">
                     {SetupGuide ? (
                         <Card className="top-6 lg:sticky">
                             <CardHeader>
@@ -2141,4 +2262,3 @@ export default function ConnectionForm({
         </div>
     );
 }
-

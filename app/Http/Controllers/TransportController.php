@@ -62,8 +62,8 @@ class TransportController extends Controller {
              * Filters a transport's connection settings schema before the admin UI renders it.
              *
              * Applies to every transport after the plugin's own fields are in place. Add a field
-             * here to collect an extra setting on the connection form — the add-on adds the
-             * webhook secret of the providers that report delivery events this way. A field
+             * here to collect an extra setting on the connection form, for instance a webhook
+             * secret for a provider that reports delivery events. A field
              * follows the schema shape (`type`, `label`, `required`, `default`, optional `help`,
              * `options`, `visible_when`); its value is stored with the connection and, when its
              * name matches a secret fragment or `boolean_smtp_sensitive_keys`, encrypted.

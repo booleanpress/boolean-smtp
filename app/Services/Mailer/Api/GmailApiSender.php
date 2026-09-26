@@ -17,8 +17,8 @@ use BooleanSmtp\Core\Foundation\Application;
 use function BooleanSmtp\Core\app;
 
 /**
- * Sends mail through the Gmail API's `users.messages.send` endpoint, and supports Google's
- * One Click connection mode through a Pro-provided bearer token.
+ * Sends mail through the Gmail API's `users.messages.send` endpoint. A delivery mode another
+ * plugin provides is handed to {@see ExtensionDeliveryModes}.
  *
  * The message is transmitted as a raw RFC 822 MIME document, base64url-encoded as the API
  * requires. OAuth access tokens are refreshed automatically when they are missing or close to
@@ -37,7 +37,7 @@ final class GmailApiSender {
     private const TOKEN_REFRESH_LEEWAY_SECONDS = 300;
 
     /**
-     * Diagnostic details about the most recent token resolution or One Click dispatch, for the
+     * Diagnostic details about the most recent token resolution or delivery-mode dispatch, for the
      * admin UI and logs.
      *
      * @since 1.0.0
@@ -96,8 +96,8 @@ final class GmailApiSender {
     /**
      * Send a raw MIME message through the Gmail API.
      *
-     * Delegates to the One Click dispatch path when the connection's delivery mode is
-     * `one_click`; otherwise resolves a valid OAuth access token, refreshing it first if needed.
+     * Resolves a valid OAuth access token for the `api` mode, refreshing it first if needed; a
+     * delivery mode another plugin provides is handed to {@see ExtensionDeliveryModes}.
      *
      * @since 1.0.0
      *
@@ -109,8 +109,9 @@ final class GmailApiSender {
      *                        failure otherwise.
      */
     public function sendRawMime(array &$settings, string $rawMime): bool | \WP_Error {
-        if ((string) ($settings['delivery_mode'] ?? 'api') === 'one_click') {
-            return $this->dispatchOneClick('send', $settings, $rawMime);
+        $mode = (string) ($settings['delivery_mode'] ?? 'api');
+        if ($mode !== 'api') {
+            return $this->dispatchExtensionMode('send', $mode, $settings, $rawMime);
         }
 
         $token = $this->getValidAccessToken($settings);
@@ -122,89 +123,35 @@ final class GmailApiSender {
     }
 
     /**
-     * Dispatch a send or probe for a Google One Click connection.
-     *
-     * The actual bearer-token request against the Gmail API is implemented by the BooleanSMTP Pro
-     * add-on, which supplies its result through the `boolean_smtp_google_send_one_click` and
-     * `boolean_smtp_google_probe_one_click` filters (the same dispatch pattern used elsewhere for
-     * Pro-only provider logic). This method only validates that a bearer token is present before
-     * delegating; when the filter returns a value that is not a recognized result array, Pro is
-     * not active, and the call fails rather than silently doing nothing.
+     * Send through, or check, a delivery mode another plugin provides.
      *
      * @since 1.0.0
      *
-     * @param  string                $kind     Operation to dispatch: `send` or `probe`.
-     * @param  array<string, mixed>  $settings Decrypted connection settings. Passed by reference
-     *                                          because a successful dispatch may update
-     *                                          `one_click_status` in place.
-     * @param  string                $rawMime  Raw MIME message to send; ignored for `probe`.
+     * @param  string                $operation `send` or `probe`.
+     * @param  string                $mode      The connection's delivery mode.
+     * @param  array<string, mixed>  $settings  Decrypted connection settings. Passed by reference
+     *                                          because the handling plugin may ask to store settings.
+     * @param  string                $rawMime   Raw MIME message to send; empty for `probe`.
      * @return bool|\WP_Error True on success; a `WP_Error` describing the failure otherwise.
      */
-    private function dispatchOneClick(string $kind, array &$settings, string $rawMime = ''): bool | \WP_Error {
-        $token           = trim((string) ($settings['one_click_bearer_token'] ?? ''));
+    private function dispatchExtensionMode(string $operation, string $mode, array &$settings, string $rawMime = ''): bool | \WP_Error {
         $this->authDebug = [
-            'token_source'            => $token === '' ? 'missing_one_click_bearer' : 'one_click_bearer_token',
+            'token_source'            => 'delivery_mode:' . $mode,
             'refresh_attempted'       => false,
             'refresh_succeeded'       => false,
             'token_expires_at'        => null,
             'token_refresh_at'        => null,
             'token_seconds_remaining' => null
         ];
-        $this->persistableTokenFields = [];
 
-        if ($token === '') {
-            return new \WP_Error('booleansmtp_gmail_one_click', 'Google One Click requires a valid bearer token. Reconnect the account.');
+        [$result, $stored] = ExtensionDeliveryModes::dispatch($operation, $mode, 'google', $settings, $rawMime);
+
+        $this->persistableTokenFields = $stored;
+        foreach ($stored as $key => $value) {
+            $settings[$key] = $value;
         }
 
-        /**
-         * Filters the result of a Google One Click send.
-         *
-         * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-         * `success` key, is treated as Pro not being active.
-         *
-         * @since 1.0.0
-         *
-         * @param  mixed                 $result   Default value; null unless a callback has run.
-         *                                          Return `array{success: bool, error?: \WP_Error,
-         *                                          status?: string}` describing the outcome.
-         * @param  string                $rawMime  Raw MIME message being sent.
-         * @param  array<string, mixed>  $settings Decrypted connection settings.
-         * @return mixed The result to use, or the default to run the built-in behaviour.
-         */
-        $outcome = $kind === 'send'
-            ? \apply_filters('boolean_smtp_google_send_one_click', null, $rawMime, $settings)
-            /**
-             * Filters the result of a Google One Click connection probe.
-             *
-             * Implemented by the BooleanSMTP Pro add-on. A non-array result, or one missing the
-             * `success` key, is treated as Pro not being active.
-             *
-             * @since 1.0.0
-             *
-             * @param  mixed                 $result   Default value; null unless a callback has run.
-             *                                          Return `array{success: bool, error?: \WP_Error,
-             *                                          status?: string}` describing the outcome.
-             * @param  array<string, mixed>  $settings Decrypted connection settings.
-             * @return mixed The result to use, or the default to run the built-in behaviour.
-             */
-            : \apply_filters('boolean_smtp_google_probe_one_click', null, $settings);
-
-        if (!\is_array($outcome) || !\array_key_exists('success', $outcome)) {
-            return new \WP_Error('booleansmtp_gmail_one_click', 'Google One Click requires the BooleanSMTP Pro add-on to be active. Reconnect the account or contact support.');
-        }
-
-        if (!empty($outcome['status'])) {
-            $settings['one_click_status'] = $outcome['status'];
-            $this->persistableTokenFields = ['one_click_status' => $outcome['status']];
-        }
-
-        if ($outcome['success']) {
-            return true;
-        }
-
-        return $outcome['error'] instanceof \WP_Error
-            ? $outcome['error']
-            : new \WP_Error('booleansmtp_gmail_one_click_http', 'Google One Click request failed.');
+        return $result;
     }
 
     /**
@@ -248,8 +195,8 @@ final class GmailApiSender {
     /**
      * Verify that a connection's Gmail API credentials are usable.
      *
-     * Delegates to the One Click dispatch path when the connection's delivery mode is
-     * `one_click`; otherwise resolves a valid OAuth access token, refreshing it first if needed.
+     * Resolves a valid OAuth access token for the `api` mode, refreshing it first if needed; a
+     * delivery mode another plugin provides is handed to {@see ExtensionDeliveryModes}.
      *
      * @since 1.0.0
      *
@@ -259,8 +206,9 @@ final class GmailApiSender {
      *                        failure otherwise.
      */
     public function probe(array &$settings): bool | \WP_Error {
-        if ((string) ($settings['delivery_mode'] ?? 'api') === 'one_click') {
-            return $this->dispatchOneClick('probe', $settings);
+        $mode = (string) ($settings['delivery_mode'] ?? 'api');
+        if ($mode !== 'api') {
+            return $this->dispatchExtensionMode('probe', $mode, $settings);
         }
 
         $token = $this->getValidAccessToken($settings);
@@ -330,7 +278,7 @@ final class GmailApiSender {
     }
 
     /**
-     * Get diagnostic details about the most recent token resolution or One Click dispatch.
+     * Get diagnostic details about the most recent token resolution or delivery-mode dispatch.
      *
      * @since 1.0.0
      *

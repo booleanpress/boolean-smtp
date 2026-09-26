@@ -128,31 +128,70 @@ class Request
     }
 
     /**
-     * Create a request from PHP globals.
+     * Create a request from the one WordPress's REST server built for this call.
+     *
+     * Everything comes from `WP_REST_Request`, which WordPress has already parsed and unslashed:
+     * the query, the form and JSON bodies, the raw body (a provider webhook signs exactly those
+     * bytes), uploaded files, the headers and the route's URL parameters. The same values arrive
+     * whether the call is a real HTTP request or an internal dispatch (`rest_do_request()`, the
+     * batch endpoint, WP-CLI), and no superglobal is read, apart from the client address, which
+     * `WP_REST_Request` does not carry and which is kept only when it is a valid IP address.
+     *
+     * @since 0.2.11
+     *
+     * @param \WP_REST_Request $wpRequest The request WordPress is dispatching.
+     * @return static
      */
-    public static function capture(): static
+    public static function fromWpRest(\WP_REST_Request $wpRequest): static
     {
-        $content = file_get_contents('php://input') ?: null;
-        $request = $_POST;
+        $route  = (string) $wpRequest->get_route();
+        $prefix = \function_exists('rest_get_url_prefix') ? trim((string) rest_get_url_prefix(), '/') : 'wp-json';
+        $query  = $wpRequest->get_query_params();
 
-        // For PUT/PATCH/DELETE, parse form-urlencoded body into request array
-        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-        if (in_array($method, ['PUT', 'PATCH', 'DELETE']) && $content) {
-            $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-            if (str_contains($contentType, 'application/x-www-form-urlencoded')) {
-                parse_str($content, $parsedBody);
-                $request = array_merge($request, $parsedBody);
+        $server = [
+            'REQUEST_METHOD' => strtoupper((string) $wpRequest->get_method()),
+            'REQUEST_URI'    => '/' . $prefix . $route . ($query !== [] ? '?' . http_build_query($query) : ''),
+        ];
+
+        // WordPress stores header names lower-cased with underscores (`content_type`, `user_agent`).
+        foreach ($wpRequest->get_headers() as $name => $values) {
+            $key   = strtoupper((string) $name);
+            $value = implode(', ', array_map('strval', (array) $values));
+            $server[\in_array($key, ['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5'], true) ? $key : 'HTTP_' . $key] = $value;
+        }
+
+        if (\function_exists('is_ssl') && is_ssl()) {
+            $server['HTTPS'] = 'on';
+        }
+
+        if (isset($_SERVER['REMOTE_ADDR']) && \is_string($_SERVER['REMOTE_ADDR']) && \function_exists('wp_unslash')) {
+            $address = filter_var(sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])), FILTER_VALIDATE_IP);
+            if (\is_string($address)) {
+                $server['REMOTE_ADDR'] = $address;
             }
         }
 
-        return new static(
-            $_GET,
-            $request,
-            $_COOKIE,
-            $_FILES,
-            $_SERVER,
-            $content
+        $content = (string) $wpRequest->get_body();
+        $body    = $wpRequest->get_body_params();
+        $files   = $wpRequest->get_file_params();
+
+        $request = new static(
+            \is_array($query) ? $query : [],
+            \is_array($body) ? $body : [],
+            [],
+            \is_array($files) ? $files : [],
+            $server,
+            $content !== '' ? $content : null
         );
+
+        $json = $wpRequest->get_json_params();
+        if (\is_array($json) && $json !== []) {
+            $request->setJsonParams($json);
+        }
+
+        $request->setRouteParams($wpRequest->get_url_params());
+
+        return $request;
     }
 
     /**
@@ -486,7 +525,7 @@ class Request
     }
 
     /**
-     * Merge into the query parameters; a key given here replaces the captured one.
+     * Merge into the query parameters; a key given here replaces the current one.
      *
      * @since 0.2.6
      *

@@ -14,9 +14,9 @@ namespace BooleanSmtp\Services\Mailer\Transports;
 use BooleanSmtp\Contracts\TransportContract;
 
 /**
- * Sends mail through Google/Gmail. Supports two delivery modes in the free plugin: `api` (Gmail
- * API over HTTPS, OAuth) and `smtp` (SMTP with an app password); add-ons may register further
- * delivery modes through the `boolean_smtp_google_*` filters below.
+ * Sends mail through Google/Gmail. Supports two delivery modes: `api` (Gmail API over HTTPS,
+ * OAuth) and `smtp` (SMTP with an app password); another plugin may register further delivery
+ * modes through the `boolean_smtp_google_*` filters below.
  *
  * @since 1.0.0
  */
@@ -86,7 +86,7 @@ class GoogleTransport implements TransportContract {
     /**
      * Configure PHPMailer for Gmail's SMTP endpoint.
      *
-     * Does nothing unless the delivery mode is `smtp`: the `api` mode and any add-on-provided mode
+     * Does nothing unless the delivery mode is `smtp`: the `api` mode and any mode another plugin provides
      * (such as a hosted OAuth proxy) send over HTTPS instead, bypassing PHPMailer's SMTP transport.
      *
      * @since 1.0.0
@@ -96,8 +96,8 @@ class GoogleTransport implements TransportContract {
      */
     public function configure(\PHPMailer\PHPMailer\PHPMailer $phpmailer, array $settings): void {
         $mode = (string) ($settings['delivery_mode'] ?? 'api');
-        // Only 'smtp' needs a real PHPMailer SMTP/DSN configuration -- 'api' and any add-on-provided
-        // mode (e.g. Pro's One Click) send over HTTPS instead, so both skip this unconditionally.
+        // Only 'smtp' needs a real PHPMailer SMTP/DSN configuration -- 'api' and any mode another
+        // plugin provides send over HTTPS instead, so both skip this unconditionally.
         if ($mode !== 'smtp') {
             return;
         }
@@ -164,15 +164,15 @@ class GoogleTransport implements TransportContract {
             return $errors;
         }
 
-        // Any other delivery mode (e.g. Pro's One Click) is entirely validated by whichever
-        // add-on registered it via the boolean_smtp_google_delivery_modes filter -- see
-        // getSettingsSchema()/getValidationRules() for the matching schema/rule filters.
+        // Any other delivery mode is validated entirely by the plugin that registered it through
+        // the boolean_smtp_google_delivery_modes filter -- see getSettingsSchema() and
+        // getValidationRules() for the matching schema and rule filters.
         /**
-         * Filters validation errors for a Google/Gmail connection using a delivery mode not
-         * implemented by the free transport.
+         * Filters validation errors for a Google/Gmail connection using a delivery mode the
+         * transport does not implement itself.
          *
-         * Fires only when the delivery mode is neither `api` nor `smtp` (a mode registered by an
-         * add-on through the `boolean_smtp_google_delivery_modes` filter). Return the validation
+         * Fires only when the delivery mode is neither `api` nor `smtp` (a mode another plugin
+         * registered through the `boolean_smtp_google_delivery_modes` filter). Return the validation
          * errors for that mode, keyed by field name.
          *
          * @since 1.0.0
@@ -283,13 +283,11 @@ class GoogleTransport implements TransportContract {
             ]
         ];
 
-        // Add-on extension point: Pro's One Click adds a 'one_click' delivery_mode option plus its
-        // own one_click_bearer_token/one_click_status fields here -- see GoogleSchemaExtender.
         /**
          * Filters the Google/Gmail connection settings schema before it is returned to the admin UI.
          *
-         * Allows an add-on to extend the schema with fields for an additional delivery mode (for
-         * example, a hosted OAuth proxy). Return the schema, keyed by field name.
+         * Allows another plugin to extend the schema with fields for an additional delivery mode.
+         * Return the schema, keyed by field name.
          *
          * @since 1.0.0
          *
@@ -310,7 +308,7 @@ class GoogleTransport implements TransportContract {
         /**
          * Filters the delivery modes available for the Google/Gmail transport.
          *
-         * Return the delivery modes, adding an entry for any mode an add-on registers.
+         * Return the delivery modes, adding an entry for any mode another plugin registers.
          *
          * @since 1.0.0
          *
@@ -360,11 +358,10 @@ class GoogleTransport implements TransportContract {
             'password'      => 'required_if:delivery_mode,smtp|string'
         ];
 
-        // Add-on extension point: Pro's One Click adds a one_click_bearer_token rule here.
         /**
          * Filters the validation rules for Google/Gmail connection settings.
          *
-         * Return the rules, adding entries for any fields an add-on introduces.
+         * Return the rules, adding entries for any fields another plugin introduces.
          *
          * @since 1.0.0
          *

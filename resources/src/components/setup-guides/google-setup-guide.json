@@ -23,9 +23,9 @@
         ]
       },
       {
-        "title": "Publish the OAuth consent screen (do not skip)",
+        "title": "Publish the OAuth consent screen",
         "paragraphs": [
-          "A brand-new consent screen defaults to Testing status, which caps you at 100 test users and silently expires your refresh token after 7 days -- your connection will stop working a week later with no error anywhere in BooleanSMTP. In Google Cloud Console > APIs & Services > OAuth consent screen, set Publishing status to In production. This does not require Google's app review for your own single-site use; verification is only enforced once an app is shared publicly at scale."
+          "Set Publishing status to In production in Google Cloud Console. Testing mode expires refresh tokens after 7 days."
         ]
       }
     ]
@@ -47,9 +47,9 @@
         ]
       },
       {
-        "title": "Publish the OAuth consent screen (do not skip)",
+        "title": "Publish the OAuth consent screen",
         "paragraphs": [
-          "Same as Database storage mode: set Publishing status to In production in Google Cloud Console's OAuth consent screen settings, or your refresh token silently expires after 7 days."
+          "Set Publishing status to In production in Google Cloud Console. Testing mode expires refresh tokens after 7 days."
         ]
       }
     ]
@@ -86,48 +86,6 @@
         "title": "Register connection",
         "paragraphs": [
           "Keep storage in WP Config mode and save connection."
-        ]
-      }
-    ]
-  },
-  "one_click_db": {
-    "title": "API (One Click) + Database",
-    "intro": "Use the hosted BooleanSMTP OAuth proxy for a fast Google connection without manual Google Cloud Console setup.",
-    "steps": [
-      {
-        "title": "Select API (One Click)",
-        "paragraphs": [
-          "Choose API (One Click) mode and keep Credential Storage as Database."
-        ]
-      },
-      {
-        "title": "Connect with Google",
-        "paragraphs": [
-          "Click Connect with Google and complete consent in the hosted One Click flow."
-        ]
-      },
-      {
-        "title": "Save and test",
-        "paragraphs": [
-          "Save connection after token status shows connected, then send a test email."
-        ]
-      }
-    ]
-  },
-  "one_click_wp_config": {
-    "title": "API (One Click) + External Config",
-    "intro": "One Click token storage remains encrypted in database; external credential mode can still be used for sender settings.",
-    "steps": [
-      {
-        "title": "Connect first",
-        "paragraphs": [
-          "Use Connect with Google to complete One Click OAuth and store bearer token."
-        ]
-      },
-      {
-        "title": "Confirm settings and save",
-        "paragraphs": [
-          "Save the connection and verify a test email. If One Click send fails, reconnect; SMTP fallback is not automatic in this mode."
         ]
       }
     ]

@@ -20,7 +20,7 @@ namespace BooleanSmtp\Services\Settings;
  * @since 1.0.0
  *
  * @see https://docs.aws.amazon.com/ses/latest/APIReference-V2/
- * @see https://docs.aws.amazon.com/ses/latest/APIReferenceV1/
+ * @see https://docs.aws.amazon.com/ses/latest/APIReference/
  */
 final class SesApiVersionProvider {
     /**
@@ -130,7 +130,7 @@ final class SesApiVersionProvider {
     public static function documentationUrl(int $version): string {
         return match ($version) {
             2       => 'https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html',
-            default => 'https://docs.aws.amazon.com/ses/latest/APIReferenceV1/API_SendRawEmail.html'
+            default => 'https://docs.aws.amazon.com/ses/latest/APIReference/API_SendRawEmail.html'
         };
     }
 }

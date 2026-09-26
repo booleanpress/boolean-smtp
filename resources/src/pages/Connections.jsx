@@ -1,4 +1,4 @@
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router';
 import {
     Trash2,
@@ -17,7 +17,6 @@ import {
     ChevronRight,
 } from 'lucide-react';
 import api from '../services/api';
-import StatusBadge from '../components/StatusBadge';
 import HealthBadge from '../components/HealthBadge';
 import ConnectionsTableSkeleton from '../components/connections/ConnectionsTableSkeleton';
 import { Badge } from '@/components/ui/badge';
@@ -64,11 +63,12 @@ import { Label } from "@/components/ui/label";
 import { Pagination, PaginationContent, PaginationItem } from "@/components/ui/pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { MAIL_PROVIDERS } from '../config/mailers';
 import { useTranslations } from '../hooks/useTranslations';
-import { useProExtensions } from '../hooks/useProExtensions';
+import { useExtensions } from '../hooks/useExtensions';
 import { TABLE_HEADER_CLASS } from '@/lib/table';
 
 function getCurrentUserEmail() {
@@ -81,9 +81,9 @@ function getCurrentUserEmail() {
 export default function Connections() {
     const { t } = useTranslations();
     const [connections, setConnections] = useState([]);
-    // Panels an add-on shows under the list (sender groups, for example).
-    const { proConnectionPanels } = useProExtensions();
-    const listPanels = proConnectionPanels.filter(panel => panel.slot === 'mailers-list');
+    // Panels another plugin shows under the list.
+    const { connectionPanels } = useExtensions();
+    const listPanels = connectionPanels.filter(panel => panel.slot === 'mailers-list');
     const [routingSettings, setRoutingSettings] = useState({});
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -95,6 +95,10 @@ export default function Connections() {
     const [testConnectionId, setTestConnectionId] = useState(null);
     const [testRecipient, setTestRecipient] = useState(() => getCurrentUserEmail());
     const [isSending, setIsSending] = useState(false);
+    const [openModeDetailsId, setOpenModeDetailsId] = useState(null);
+    const [statusUpdatingId, setStatusUpdatingId] = useState(null);
+    const [pendingDeactivation, setPendingDeactivation] = useState(null);
+    const statusTransitionVersion = useRef(0);
 
     // Optional column visibility (Provider, Status and Actions are always shown)
     const [visibleColumns, setVisibleColumns] = useState({ sender: true, mode: true, health: true });
@@ -111,10 +115,13 @@ export default function Connections() {
     // `refresh: true` is the manual "Refresh Status" path: the table stays mounted and the
     // button shows a spinner instead of swapping the whole page to the skeleton.
     async function loadConnections({ refresh = false } = {}) {
+        const version = statusTransitionVersion.current;
         if (refresh) setRefreshing(true); else setLoading(true);
         try {
             const res = await api.get('connections');
-            setConnections(res.data || []);
+            if (version === statusTransitionVersion.current) {
+                setConnections(res.data || []);
+            }
         } catch (err) {
             console.error('Failed to load connections:', err);
             toast.error(t('connections.load_failed', 'Failed to load connections'));
@@ -157,6 +164,54 @@ export default function Connections() {
         } catch (err) {
             toast.error(t('connections.bulk_delete_failed', 'Failed to delete connections: {{message}}', { message: err.message }));
         }
+    }
+
+    async function updateConnectionStatus(conn, isActive) {
+        // Ignore list requests started before or during this change if they settle later.
+        statusTransitionVersion.current += 1;
+        setStatusUpdatingId(conn.id);
+        try {
+            const res = await api.put(`connections/${conn.id}`, { is_active: isActive });
+            // The list response also recalculates sender notices for other mailers. Apply one
+            // settled list update so the switch never flashes through a second refresh state.
+            let updatedConnections = null;
+            try {
+                const list = await api.get('connections');
+                updatedConnections = list.data || [];
+            } catch (refreshError) {
+                console.error('Failed to refresh connections after status update:', refreshError);
+            }
+            setConnections(prev => updatedConnections ?? prev.map(row =>
+                row.id === conn.id ? { ...row, is_active: Boolean(res.data?.is_active ?? isActive) } : row
+            ));
+            toast.success(isActive
+                ? t('connections.activated', '{{name}} activated.', { name: conn.name })
+                : t('connections.deactivated', '{{name}} deactivated.', { name: conn.name }));
+        } catch (err) {
+            const fieldError = err.errors?.is_active;
+            const message = Array.isArray(fieldError) ? fieldError[0] : fieldError;
+            toast.error(t('connections.status_update_failed', 'Could not update {{name}}: {{message}}', {
+                name: conn.name,
+                message: message || err.message,
+            }));
+        } finally {
+            statusTransitionVersion.current += 1;
+            setStatusUpdatingId(null);
+        }
+    }
+
+    function handleStatusChange(conn, isActive) {
+        if (statusUpdatingId !== null || isActive === Boolean(conn.is_active)) return;
+
+        const assignedDefault = Number(routingSettings.default_connection_id) === Number(conn.id);
+        const enabledFallback = routingSettings.fallback_enabled !== false
+            && Number(routingSettings.fallback_connection_id) === Number(conn.id);
+        if (!isActive && (assignedDefault || enabledFallback)) {
+            setPendingDeactivation(conn);
+            return;
+        }
+
+        updateConnectionStatus(conn, isActive);
     }
 
     function handleQuickTest(id) {
@@ -235,33 +290,8 @@ export default function Connections() {
     }
 
     const formatOauthStatus = (conn) => {
-        const isOauthDriver = ['google', 'gmail', 'outlook', 'zoho'].includes(conn.driver);
+        const isOauthDriver = ['google', 'gmail', 'outlook'].includes(conn.driver);
         if (!isOauthDriver) return null;
-
-        const mode = String(conn.settings?.delivery_mode || '');
-        if (conn.driver === 'outlook' && mode === 'one_click') {
-            const status = String(conn.settings?.one_click_status || '').trim();
-            if (status !== '') {
-                return t('connections.one_click_status', 'One Click: {{status}}', {
-                    status: status.replace(/_/g, ' '),
-                });
-            }
-            const hasToken = String(conn.settings?.one_click_bearer_token || '').trim() !== '';
-            return hasToken
-                ? t('connections.one_click_connected', 'One Click connected')
-                : t('connections.one_click_not_connected', 'One Click not connected');
-        }
-
-        // Application Permission (client-credentials) never has a refresh token by design -- the
-        // generic "No refresh token" fallback below would be permanently wrong for this mode, so
-        // report configuration completeness instead (mirrors the one_click branch above).
-        if (conn.driver === 'outlook' && mode === 'app_permission') {
-            const configured = ['app_client_id', 'app_client_secret', 'app_tenant_id']
-                .every((key) => String(conn.settings?.[key] || '').trim() !== '');
-            return configured
-                ? t('connections.app_permission_configured', 'Application Permission configured')
-                : t('connections.app_permission_not_configured', 'Application Permission incomplete');
-        }
 
         const remaining = Number(conn.oauth_token_seconds_remaining);
         const hasExpiry = Number.isFinite(remaining);
@@ -411,19 +441,19 @@ export default function Connections() {
                                 const providerName = provider ? t(`mailers.${provider.driver}.name`, provider.name) : conn.driver;
                                 const isPhp = conn.driver === 'php';
                                 const mode = String(conn.settings?.delivery_mode || '');
-                                const isApi = !isPhp && (mode === 'api' || mode === 'one_click' || mode === 'app_permission' || ['google', 'gmail', 'zoho'].includes(conn.driver));
+                                // Google and Microsoft send every mode except SMTP over their APIs, including a
+                                // mode another plugin provides; that mode manages its own sign-in, so it has no
+                                // token status here.
+                                const isExtensionMode = ['google', 'outlook'].includes(conn.driver) && mode !== '' && !['api', 'smtp'].includes(mode);
+                                const isApi = !isPhp && (mode === 'api' || isExtensionMode || ['google', 'gmail'].includes(conn.driver));
                                 const modeLabel = isPhp
                                     ? t('connections.mode_php', 'PHP')
-                                    : mode === 'one_click'
-                                        ? t('connections.mode_api_one_click', 'API (One Click)')
-                                        : mode === 'app_permission'
-                                            ? t('connections.mode_api_app_permission', 'API (App Permission)')
-                                            : isApi
-                                                ? t('connections.mode_api', 'API')
-                                                : t('connections.mode_smtp', 'SMTP');
+                                    : isApi
+                                        ? t('connections.mode_api', 'API')
+                                        : t('connections.mode_smtp', 'SMTP');
                                 const modeVariant = isPhp ? 'secondary' : isApi ? 'info' : 'outline';
                                 const ModeIcon = isPhp ? Mail : isApi ? Zap : Clock;
-                                const oauthStatus = formatOauthStatus(conn);
+                                const oauthStatus = isApi && !isExtensionMode ? formatOauthStatus(conn) : null;
                                 const isSelected = selectedIds.includes(conn.id);
                                 // IDs round-trip through the REST API as numeric strings, so compare numerically.
                                 const isDefaultConnection = Number(routingSettings.default_connection_id) === Number(conn.id);
@@ -462,7 +492,11 @@ export default function Connections() {
                                                                         <Star className="size-3.5 fill-current" />
                                                                     </span>
                                                                 </TooltipTrigger>
-                                                                <TooltipContent>{t('connections.badge_default_tooltip', 'Used as the default connection in Settings > Delivery Architecture.')}</TooltipContent>
+                                                                <TooltipContent>
+                                                                    {conn.is_active
+                                                                        ? t('connections.badge_default_tooltip', 'Used as the default connection in Settings > Delivery & Reliability.')
+                                                                        : t('connections.badge_default_inactive_tooltip', 'Assigned as the default in Settings, but inactive mailers are skipped for automatic sending.')}
+                                                                </TooltipContent>
                                                             </Tooltip>
                                                         ) : null}
                                                         {isFallbackConnection ? (
@@ -479,7 +513,9 @@ export default function Connections() {
                                                                 <TooltipContent>
                                                                     {fallbackDisabled
                                                                         ? t('connections.badge_fallback_disabled_tooltip', 'Set as the fallback connection in Settings, but fallback is currently disabled.')
-                                                                        : t('connections.badge_fallback_tooltip', 'Used as the fallback connection in Settings > Delivery Architecture.')}
+                                                                        : !conn.is_active
+                                                                            ? t('connections.badge_fallback_inactive_tooltip', 'Assigned as the fallback in Settings, but inactive mailers are skipped for automatic sending.')
+                                                                        : t('connections.badge_fallback_tooltip', 'Used as the fallback connection in Settings > Delivery & Reliability.')}
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                         ) : null}
@@ -507,22 +543,57 @@ export default function Connections() {
 
                                         {visibleColumns.mode && (
                                             <TableCell className="px-4 py-1.5">
-                                                <div className="flex flex-col gap-0.5">
+                                                {oauthStatus ? (
+                                                    <Tooltip
+                                                        open={openModeDetailsId === conn.id}
+                                                        onOpenChange={open => setOpenModeDetailsId(open ? conn.id : null)}
+                                                    >
+                                                        <TooltipTrigger asChild>
+                                                            <Badge variant={modeVariant} asChild>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="xs"
+                                                                    className="h-auto cursor-pointer hover:bg-info hover:text-info-foreground"
+                                                                    aria-label={t('connections.mode_details', 'Mode details for {{name}}', { name: conn.name })}
+                                                                    onClick={() => setOpenModeDetailsId(prev => prev === conn.id ? null : conn.id)}
+                                                                >
+                                                                    <ModeIcon />
+                                                                    {modeLabel}
+                                                                </Button>
+                                                            </Badge>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>{oauthStatus}</TooltipContent>
+                                                    </Tooltip>
+                                                ) : (
                                                     <Badge variant={modeVariant}>
                                                         <ModeIcon />
                                                         {modeLabel}
                                                     </Badge>
-                                                    {oauthStatus ? (
-                                                        <span className="text-xs text-muted-foreground">
-                                                            {oauthStatus}
-                                                        </span>
-                                                    ) : null}
-                                                </div>
+                                                )}
                                             </TableCell>
                                         )}
 
                                         <TableCell className="px-4 py-1.5">
-                                            <StatusBadge status={conn.is_active ? 'active' : 'inactive'} />
+                                            <div className="flex items-center gap-2" aria-busy={statusUpdatingId === conn.id}>
+                                                <Switch
+                                                    id={`connection-status-${conn.id}`}
+                                                    checked={Boolean(conn.is_active)}
+                                                    onCheckedChange={checked => handleStatusChange(conn, checked)}
+                                                    aria-disabled={statusUpdatingId !== null}
+                                                    aria-label={t('connections.status_for', 'Status for {{name}}', { name: conn.name })}
+                                                />
+                                                <Label htmlFor={`connection-status-${conn.id}`} className="text-xs text-muted-foreground">
+                                                    {conn.is_active
+                                                        ? t('connections.status_active', 'Active')
+                                                        : t('connections.status_inactive', 'Inactive')}
+                                                </Label>
+                                                {statusUpdatingId === conn.id ? (
+                                                    <span className="sr-only" role="status">
+                                                        {t('connections.status_saving', 'Saving status')}
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                         </TableCell>
 
                                         {visibleColumns.health && (
@@ -536,7 +607,7 @@ export default function Connections() {
 
                                         <TableCell className="px-4 py-1.5 text-right">
                                             <div className="flex items-center justify-end gap-1">
-                                                <Tooltip>
+                                                {conn.is_active && <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button
                                                             variant="ghost"
@@ -549,7 +620,7 @@ export default function Connections() {
                                                         </Button>
                                                     </TooltipTrigger>
                                                     <TooltipContent>{t('connections.quick_test', 'Quick Test')}</TooltipContent>
-                                                </Tooltip>
+                                                </Tooltip>}
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <Button asChild variant="ghost" size="icon-sm" aria-label={t('connections.edit_connection', 'Edit Connection')}>
@@ -644,6 +715,35 @@ export default function Connections() {
                     </Suspense>
                 );
             })}
+
+            {/* Deactivation confirmation for configured routing connections */}
+            <AlertDialog open={!!pendingDeactivation} onOpenChange={open => !open && setPendingDeactivation(null)}>
+                <AlertDialogContent className="gap-0 overflow-hidden rounded-xl bg-card p-0 data-[size=default]:sm:max-w-sm">
+                    <AlertDialogHeader className="p-4">
+                        <AlertDialogTitle>{t('connections.deactivate_title', 'Deactivate mailer?')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('connections.deactivate_desc', 'Automatic emails will skip {{name}}. Its Settings assignment stays saved.', { name: pendingDeactivation?.name || '' })}
+                            {pendingDeactivation && Number(routingSettings.default_connection_id) === Number(pendingDeactivation.id) ? (
+                                <> {t('connections.deactivate_default_desc', 'Another active mailer becomes the default, if available.')}</>
+                            ) : null}
+                            {pendingDeactivation && routingSettings.fallback_enabled !== false
+                                && Number(routingSettings.fallback_connection_id) === Number(pendingDeactivation.id) ? (
+                                    <> {t('connections.deactivate_fallback_desc', 'Immediate fallback skips it until reactivated.')}</>
+                                ) : null}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter className="border-t bg-muted/50 px-4 py-4">
+                        <AlertDialogCancel size="sm" className="bg-card hover:bg-muted">{t('common.cancel', 'Cancel')}</AlertDialogCancel>
+                        <AlertDialogAction size="sm" className="data-[slot=alert-dialog-action]:bg-foreground data-[slot=alert-dialog-action]:text-card data-[slot=alert-dialog-action]:hover:bg-foreground/90" onClick={() => {
+                            const conn = pendingDeactivation;
+                            setPendingDeactivation(null);
+                            if (conn) updateConnectionStatus(conn, false);
+                        }}>
+                            {t('connections.deactivate', 'Deactivate')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Single Delete Confirmation */}
             <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>

@@ -207,7 +207,7 @@ class OAuthRefreshJob {
                      *
                      * @param array<string, mixed> $payload {
                      *     @type int      $connection_id           Id of the refreshed connection.
-                     *     @type string   $driver                  Normalized OAuth driver (`google`, `outlook`, `zoho`).
+                     *     @type string   $driver                  Normalized OAuth driver (`google`, `outlook`).
                      *     @type int      $attempts                Number of attempts made.
                      *     @type int      $response_time_ms        Time the token exchange took, in milliseconds.
                      *     @type int|null $token_expires_at        Unix timestamp the new token expires at, null when unknown.

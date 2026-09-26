@@ -59,10 +59,6 @@ class Plugin extends BasePlugin {
      * @since 1.0.0
      */
     public function activate(): void {
-        // WordPress hands wp_mail() to the first plugin that declares it, and that is decided by
-        // the order of the active-plugins option, not by anything in this file.
-        (new Support\PluginLoadOrder(\plugin_basename($this->pluginFile())))->ensureFirst();
-
         $scheduler = $this->app->make(ScheduleAdapterContract::class);
 
         // Earlier builds scheduled the framework's per-minute schedule runner; nothing handles it now.
@@ -86,6 +82,12 @@ class Plugin extends BasePlugin {
             // Cron registration may be unavailable in some activation contexts
         }
 
+        // Only an activation from the Plugins screen opens the setup wizard; a command-line
+        // activation leaves the owner where they are.
+        if (\defined('WP_CLI') && WP_CLI) {
+            return;
+        }
+
         try {
             $coreSettings = app(\BooleanSmtp\Core\Settings\SettingsRepository::class);
             $coreSettings->setTransient('activation_redirect', '1', 120);
@@ -107,7 +109,8 @@ class Plugin extends BasePlugin {
     }
 
     /**
-     * One-time redirect after activation: admin URL with query flag so the SPA can open onboarding.
+     * One-time redirect after a single activation from the Plugins screen: admin URL with a query flag
+     * so the SPA can open onboarding. A bulk, network-wide or command-line activation does not redirect.
      *
      * @since 1.0.0
      */
@@ -128,6 +131,11 @@ class Plugin extends BasePlugin {
         }
 
         $coreSettings->deleteTransient('activation_redirect');
+
+        // A bulk or network-wide activation keeps the owner on the screen they were using.
+        if (isset($_GET['activate-multi']) || (\function_exists('is_network_admin') && \is_network_admin())) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Only reads which screen WordPress returned to after activating; nothing changes.
+            return;
+        }
 
         // Re-activating a site that is already set up must not send the owner back into the wizard.
         if (!$this->needsOnboarding()) {

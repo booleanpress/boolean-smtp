@@ -38,7 +38,7 @@ import ActivityHeatmap from '@/components/ActivityHeatmap';
 import ActiveSmtpPluginWarning from '@/components/migration/ActiveSmtpPluginWarning';
 import RecentActivity from '@/components/RecentActivity';
 import { useTranslations } from '@/hooks/useTranslations';
-import { useProExtensions } from '@/hooks/useProExtensions';
+import { useExtensions } from '@/hooks/useExtensions';
 import { useAdminExtensions } from '@/hooks/useAdminExtensions';
 
 const EMPTY_STATS = { email: {}, connections: {}, primary_connection: null, fallback_connection: null, heatmap: [] };
@@ -128,9 +128,9 @@ function Greeting() {
     );
 }
 
-function ProDashboardWidgets() {
-    const { proWidgets } = useProExtensions();
-    const widgets = useMemo(() => proWidgets.map(widget => ({ id: widget.id, Component: lazy(widget.component) })), [proWidgets]);
+function ExtensionDashboardWidgets() {
+    const { widgets: registeredWidgets } = useExtensions();
+    const widgets = useMemo(() => registeredWidgets.map(widget => ({ id: widget.id, Component: lazy(widget.component) })), [registeredWidgets]);
 
     if (widgets.length === 0) return null;
 
@@ -308,7 +308,7 @@ export default function Dashboard() {
 
                     <ActivityHeatmap data={stats?.heatmap || []} />
 
-                    <ProDashboardWidgets />
+                    <ExtensionDashboardWidgets />
 
                     <ExtensionCards />
                 </div>

@@ -6,7 +6,7 @@
       {
         "title": "Create an IAM user with SES permissions",
         "paragraphs": [
-          "Create a user for programmatic access with an SES-sending policy (AmazonSESFullAccess for testing, or scoped to ses:SendRawEmail, ses:GetSendQuota, ses:GetSendStatistics)."
+          "Create a user for programmatic access with an SES-sending policy (AmazonSESFullAccess for testing, or scoped to ses:SendRawEmail, ses:GetSendQuota, ses:GetSendStatistics, and ses:GetIdentityVerificationAttributes for sender checks)."
         ],
         "link": {
           "label": "Open IAM Console",

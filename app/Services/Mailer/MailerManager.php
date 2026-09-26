@@ -15,8 +15,7 @@ use BooleanSmtp\Core\Contracts\LoggerContract;
 use BooleanSmtp\Core\Foundation\Application;
 use BooleanSmtp\Contracts\EncryptorContract;
 use BooleanSmtp\Contracts\MailerContract;
-use BooleanSmtp\Contracts\Editions\MessageBodyStorageContract;
-use BooleanSmtp\Contracts\Editions\SenderRouterContract;
+use BooleanSmtp\Services\Senders\SenderRouter;
 use BooleanSmtp\Contracts\TransportContract;
 use BooleanSmtp\Models\Connection;
 use BooleanSmtp\Models\EmailLog;
@@ -388,8 +387,7 @@ class MailerManager implements MailerContract {
         }
 
         // getSettingsSchema(), not getValidationRules(): it's the complete field inventory
-        // (including optional fields with no validation rule, e.g. Zoho/Netcore/SendLayer's
-        // SMTP-mode username) and the exact same source the frontend's wp-config/env snippet
+        // (including optional fields with no validation rule) and the exact same source the frontend's wp-config/env snippet
         // generator uses, so "every field the UI told the admin to define" always round-trips.
         return array_keys((new $transportClass())->getSettingsSchema());
     }
@@ -397,8 +395,8 @@ class MailerManager implements MailerContract {
     /**
      * Resolve the transport class registered for a driver.
      *
-     * config('mail.transports') is checked first so a filter/Pro add-on registering an extra
-     * transport there is still picked up, but the built-in drivers are resolved from this
+     * config('mail.transports') is checked first so a transport another plugin registers there
+     * is still picked up, but the built-in drivers are resolved from this
      * complete, hardcoded map (mirrors config/mail.php's 'transports' list) rather than relying
      * on config() alone — the bare PHPUnit unit-test bootstrap stubs config() to always return
      * its $default, so a config()-only lookup would silently resolve every non-php/smtp driver
@@ -422,19 +420,6 @@ class MailerManager implements MailerContract {
             'google'       => Transports\GoogleTransport::class,
             'outlook'      => Transports\OutlookTransport::class,
             'ses'          => Transports\SesTransport::class,
-            'sendgrid'     => Transports\SendGridTransport::class,
-            'mailgun'      => Transports\MailgunTransport::class,
-            'postmark'     => Transports\PostmarkTransport::class,
-            'brevo'        => Transports\BrevoTransport::class,
-            'sparkpost'    => Transports\SparkPostTransport::class,
-            'netcore'      => Transports\NetcoreTransport::class,
-            'smtp2go'      => Transports\Smtp2GoTransport::class,
-            'zoho'         => Transports\ZohoTransport::class,
-            'mailersend'   => Transports\MailerSendTransport::class,
-            'mandrill'     => Transports\MandrillTransport::class,
-            'sendlayer'    => Transports\SendLayerTransport::class,
-            'smtpcom'      => Transports\SmtpComTransport::class,
-            'elasticemail' => Transports\ElasticEmailTransport::class
         ];
 
         $class = $builtIn[$driver] ?? null;
@@ -579,13 +564,7 @@ class MailerManager implements MailerContract {
      * @return bool
      */
     public function isApiDeliveryMode(string $driver, array $settings): bool {
-        $dualModeDrivers = [
-            'ses', 'google', 'outlook', 'zoho',
-            'sendgrid', 'mailgun', 'postmark', 'brevo',
-            'sparkpost', 'netcore', 'smtp2go',
-            'mailersend', 'mandrill', 'sendlayer',
-            'smtpcom', 'elasticemail'
-        ];
+        $dualModeDrivers = ['ses', 'google', 'outlook'];
 
         if (!\in_array($driver, $dualModeDrivers, true)) {
             return false;
@@ -593,14 +572,10 @@ class MailerManager implements MailerContract {
 
         $deliveryMode = (string) ($settings['delivery_mode'] ?? 'smtp');
 
-        // Outlook and Google both support API (manual app) and API (one-click proxy). Outlook
-        // additionally supports Application Permission (Pro, client-credentials, send-as-any
-        // mailbox) -- see boolean-smtp-pro/app/Services/Mailer/Api/MicrosoftSchemaExtender.php.
-        if ($driver === 'outlook') {
-            return \in_array($deliveryMode, ['api', 'one_click', 'app_permission'], true);
-        }
-        if ($driver === 'google') {
-            return \in_array($deliveryMode, ['api', 'one_click'], true);
+        // Google and Outlook send every mode except SMTP over their HTTP APIs, including a mode
+        // another plugin provides.
+        if ($driver === 'outlook' || $driver === 'google') {
+            return $deliveryMode !== 'smtp';
         }
 
         return $deliveryMode === 'api';
@@ -669,6 +644,23 @@ class MailerManager implements MailerContract {
      */
     public function registerTransport(string $driver, string $class): void {
         $this->transports[$driver] = $class;
+    }
+
+    /**
+     * Whether a transport exists for a driver: one of the plugin's own drivers, or one another
+     * plugin registered through `boolean_smtp_transports`.
+     *
+     * @since 1.0.0
+     *
+     * @param  string $driver Driver name to check.
+     * @return bool
+     */
+    public function hasTransport(string $driver): bool {
+        if ($driver === '') {
+            return false;
+        }
+
+        return \array_key_exists($driver, $this->getTransports()) || self::transportClassForDriver($driver) !== null;
     }
 
     /**
@@ -891,7 +883,7 @@ class MailerManager implements MailerContract {
 
     /**
      * Resolve the connection an outgoing message should use, trying in order: an explicitly
-     * forced or hinted connection, a Pro routing rule match, a connection whose from_email matches
+     * forced or hinted connection, a routing-rule match, a connection whose from_email matches
      * a sender the caller set (never the site's default sender), and finally the configured default
      * or primary connection.
      *
@@ -942,8 +934,9 @@ class MailerManager implements MailerContract {
 
     /**
      * Resolve the connection a routing rule selects for the message, if any.
-     * Routing rules are a Pro feature. Pro hooks this filter (when licensed) and returns
-     * a connection array; the free plugin has no rule-evaluation logic of its own.
+     *
+     * The plugin evaluates no routing rules itself; another plugin that does returns the matched
+     * connection through the filter below.
      *
      * @since 1.0.0
      *
@@ -966,7 +959,8 @@ class MailerManager implements MailerContract {
          */
         $resolved = \apply_filters('boolean_smtp_resolve_routing_rule_connection', null, $emailData);
         if (is_array($resolved) && isset($resolved['id'])) {
-            return $repo->find((int) $resolved['id']);
+            $connection = $repo->find((int) $resolved['id']);
+            return $connection && $connection->is_active ? $connection : null;
         }
 
         return null;
@@ -1023,7 +1017,7 @@ class MailerManager implements MailerContract {
             return null;
         }
 
-        return $this->app->make(SenderRouterContract::class)->pick($matches, $emailData);
+        return $this->app->make(SenderRouter::class)->pick($matches, $emailData);
     }
 
     /**
@@ -1098,7 +1092,7 @@ class MailerManager implements MailerContract {
 
         if (is_array($resolved) && isset($resolved['id']) && (int) $resolved['id'] !== $connection->id) {
             $altConnection = $repo->find((int) $resolved['id']);
-            if ($altConnection) {
+            if ($altConnection && $altConnection->is_active) {
                 return $altConnection;
             }
         }
@@ -1467,15 +1461,27 @@ class MailerManager implements MailerContract {
     }
 
     /**
-     * Whether the message body may be persisted with a log entry, as the site's message-body
-     * policy decides. Bodies are what Preview and Resend work from.
+     * Whether the message body is stored with a log entry. Bodies are what Preview and Resend
+     * work from, so they are stored unless the `boolean_smtp_should_store_message_body` filter
+     * says otherwise.
      *
      * @since 1.0.0
      *
      * @return bool
      */
     public function isBodyLoggingAllowed(): bool {
-        return $this->app->make(MessageBodyStorageContract::class)->shouldStoreBody();
+        /**
+         * Filters whether a message body is stored with its email log entry.
+         *
+         * Return false to keep bodies out of the log (recipients, subject and delivery details
+         * are still logged); Preview and Resend then have no body to work from.
+         *
+         * @since 1.0.0
+         *
+         * @param bool $store Whether to store the body. Default true.
+         * @return bool Whether to store the body.
+         */
+        return (bool) \apply_filters('boolean_smtp_should_store_message_body', true);
     }
 
     /**
@@ -1588,8 +1594,8 @@ class MailerManager implements MailerContract {
          *
          * Runs after the global logging setting has allowed the message, immediately before its
          * log entry would be created. Return `false` to keep this message out of the log — a
-         * newsletter, a message with personal data, a high-volume transactional stream, or (as
-         * the add-on's plugin exclusions do) everything a given plugin sends. Not consulted for a
+         * newsletter, a message with personal data, a high-volume transactional stream, or
+         * everything a given plugin sends. Not consulted for a
          * queued message, a resend or a fallback retry: their log entry already exists and
          * records the attempt.
          *

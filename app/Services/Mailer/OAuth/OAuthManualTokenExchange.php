@@ -17,7 +17,7 @@ use BooleanSmtp\Core\Foundation\Application;
 use function BooleanSmtp\Core\app;
 
 /**
- * Exchanges a pasted OAuth authorization code (or stores refresh token) for Google / Microsoft / Zoho.
+ * Exchanges a pasted OAuth authorization code (or stores refresh token) for Google / Microsoft.
  *
  * @since 1.0.0
  */
@@ -27,7 +27,7 @@ final class OAuthManualTokenExchange {
      *
      * @since 1.0.0
      *
-     * @param  string                $driver       Provider slug (google, outlook, zoho).
+     * @param  string                $driver       Provider slug (google, outlook).
      * @param  string                $pasted       Raw value pasted by the user (code, token, or refresh token).
      * @param  array<string, mixed>  $settings     Decrypted connection settings (must include client_id, client_secret)
      * @param  string|null           $deliveryMode Delivery mode override; falls back to settings, then "api".
@@ -43,48 +43,33 @@ final class OAuthManualTokenExchange {
 
         $mode = (string) ($deliveryMode ?? ($settings['delivery_mode'] ?? 'api'));
 
+        if ($mode !== 'api') {
+            /**
+             * Filters the settings a pasted value produces for a delivery mode another plugin provides.
+             *
+             * The plugin exchanges pasted authorization codes and refresh tokens for its own `api`
+             * mode. For a mode another plugin registers, that plugin turns the pasted value into
+             * the settings to store here; leave the result `null` for a mode that is not yours.
+             *
+             * @since 1.0.0
+             *
+             * @param array<string, mixed>|null $fields   Settings to store, or null. Default null.
+             * @param string                    $driver   `google` or `outlook`.
+             * @param string                    $mode     The connection's delivery mode.
+             * @param string                    $pasted   The pasted value, trimmed.
+             * @param array<string, mixed>      $settings Decrypted connection settings.
+             * @return array<string, mixed>|null Settings to store, or null when the value cannot be used.
+             */
+            $fields = \apply_filters('boolean_smtp_pasted_oauth_token', null, $driver, $mode, $pasted, $settings);
+
+            return \is_array($fields) ? $fields : null;
+        }
+
         return match ($driver) {
-            'google'  => $mode === 'one_click'
-            ? self::oneClickBearerToken($pasted)
-            : self::google($pasted, $settings),
-            'outlook' => $mode === 'one_click'
-            ? self::oneClickBearerToken($pasted)
-            : self::microsoft($pasted, $settings),
-            'zoho'    => self::zoho($pasted, $settings),
+            'google'  => self::google($pasted, $settings),
+            'outlook' => self::microsoft($pasted, $settings),
             default   => null,
         };
-    }
-
-    /**
-     * One Click's hosted proxy returns a bearer token directly, so no client_id/secret exchange
-     * runs here. Shared by Google and Microsoft since both use the same hosted-proxy shape;
-     * without this branch, a manual-paste fallback for a Google One Click connection would fall
-     * through to {@see google()}'s authorization-code exchange, which always fails because
-     * client_id and client_secret are not configured in one_click mode.
-     *
-     * @since 1.0.0
-     *
-     * @param  string $pasted Raw bearer token pasted by the user.
-     * @return array<string, mixed>|null
-     */
-    private static function oneClickBearerToken(string $pasted): ?array {
-        $value = self::normalizePastedOauthValue($pasted);
-        if ($value === '') {
-            return null;
-        }
-
-        if (\preg_match('/\s/', $value) === 1) {
-            return null;
-        }
-
-        if (\strlen($value) < 20) {
-            return null;
-        }
-
-        return [
-            'one_click_bearer_token' => $value,
-            'one_click_status'       => 'connected'
-        ];
     }
 
     /**
@@ -230,9 +215,8 @@ final class OAuthManualTokenExchange {
          * delegated and application tokens.
          *
          * Return a different URL to override the resolved endpoint, for example for a sovereign
-         * cloud. Fired wherever the plugin or the Pro add-on talks to the token endpoint: the
-         * manual and scheduled refreshes, the Graph sender, the credential check and the
-         * application-permission mailer.
+         * cloud. Fired wherever the plugin talks to the token endpoint: the manual and scheduled
+         * refreshes, the Graph sender and the credential check.
          *
          * @since 1.0.0
          *
@@ -450,76 +434,6 @@ final class OAuthManualTokenExchange {
         $data    = \strtr($data, '-_', '+/');
         $decoded = \base64_decode($data, true);
         return $decoded === false ? '' : $decoded;
-    }
-
-    /**
-     * Zoho OAuth authorization domains keyed by data-center region.
-     *
-     * @since 1.0.0
-     * @var array<string, string>
-     */
-    private const ZOHO_AUTH_DOMAINS = [
-        'us' => 'https://accounts.zoho.com',
-        'eu' => 'https://accounts.zoho.eu',
-        'in' => 'https://accounts.zoho.in',
-        'cn' => 'https://accounts.zoho.com.cn',
-        'au' => 'https://accounts.zoho.com.au',
-        'jp' => 'https://accounts.zoho.jp',
-        'ca' => 'https://accounts.zohocloud.ca'
-    ];
-
-    /**
-     * Exchange a pasted Zoho authorization code for tokens, or accept a pasted refresh token directly.
-     *
-     * @since 1.0.0
-     *
-     * @param  string                $pasted   Authorization code or refresh token pasted by the user.
-     * @param  array<string, mixed>  $settings Decrypted connection settings; reads client_id, client_secret, region.
-     * @return array<string, mixed>|null
-     */
-    private static function zoho(string $pasted, array $settings): ?array {
-        $clientId     = (string) ($settings['client_id'] ?? '');
-        $clientSecret = (string) ($settings['client_secret'] ?? '');
-        $region       = (string) ($settings['region'] ?? 'us');
-        if ($clientId === '' || $clientSecret === '') {
-            return null;
-        }
-
-        $authDomain = self::ZOHO_AUTH_DOMAINS[$region] ?? self::ZOHO_AUTH_DOMAINS['us'];
-        $tokenUrl   = $authDomain . '/oauth/v2/token';
-
-        $response = self::http()->post($tokenUrl, [
-            'timeout' => 20,
-            'body'    => [
-                'client_id'     => $clientId,
-                'client_secret' => $clientSecret,
-                'code'          => $pasted,
-                'grant_type'    => 'authorization_code',
-                'redirect_uri'  => OAuthRedirectUri::zoho()
-            ]
-        ]);
-
-        if (!self::http()->isError($response)) {
-            $body = json_decode(self::http()->responseBody($response), true);
-            if (\is_array($body) && !empty($body['access_token'])) {
-                return [
-                    'access_token'     => (string) $body['access_token'],
-                    'refresh_token'    => isset($body['refresh_token']) ? (string) $body['refresh_token'] : '',
-                    'token_expires_at' => isset($body['expires_in']) ? time() + (int) $body['expires_in'] : 0,
-                    'api_domain'       => (string) ($body['api_domain'] ?? 'https://mail.zoho.com')
-                ];
-            }
-        }
-
-        if (strlen($pasted) > 12) {
-            return [
-                'refresh_token'    => $pasted,
-                'access_token'     => '',
-                'token_expires_at' => 0
-            ];
-        }
-
-        return null;
     }
 
     /**

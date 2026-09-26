@@ -15,7 +15,7 @@ namespace BooleanSmtp\Services\OAuth;
  * Maps provider-specific error codes and messages to standardized BooleanSMTP error codes.
  *
  * Used by the OAuth refresh job to make consistent retry and notification decisions across
- * Google, Microsoft and Zoho, whose token endpoints each report failures with different codes
+ * Google and Microsoft, whose token endpoints each report failures with different codes
  * and message formats.
  *
  * @since 1.0.0
@@ -78,7 +78,7 @@ final class OAuthErrorClassifier {
      *
      * @param  \WP_Error|string  $error    Provider error, either a `WP_Error` or a raw error code
      *                                      string.
-     * @param  string            $provider Provider driver key (`google`, `outlook` or `zoho`).
+     * @param  string            $provider Provider driver key (`google` or `outlook`).
      * @return array{code: string, label: string, retryable: bool, recoverable: bool, message: string}
      *         Standardized error code, a human-readable label, whether an automatic retry should
      *         be attempted, whether the connection is expected to recover without user action,
@@ -105,7 +105,7 @@ final class OAuthErrorClassifier {
      *
      * @param  string  $errorCode    Provider error code.
      * @param  string  $errorMessage Provider error message.
-     * @param  string  $provider     Provider driver key (`google`, `outlook`, `zoho` or `unknown`).
+     * @param  string  $provider     Provider driver key (`google`, `outlook` or `unknown`).
      * @return array{code: string, label: string, retryable: bool, recoverable: bool, message: string}
      *         Standardized error code, a human-readable label, whether an automatic retry should
      *         be attempted, whether the connection is expected to recover without user action,

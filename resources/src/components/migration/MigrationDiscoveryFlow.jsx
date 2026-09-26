@@ -29,7 +29,7 @@ import { TABLE_HEADER_CLASS } from '@/lib/table';
 import { formatRelativeTime } from '@/lib/dates';
 
 /**
- * Tools → Migration: every other SMTP plugin found on the site, the assessment of what each
+ * The Migration page: every other SMTP plugin found on the site, the assessment of what each
  * one holds, an import of its connections as inactive drafts, and its email log imported in
  * chunks with progress. Nothing is written to the other plugin; a re-run updates the same
  * drafts and skips the log rows already present. A plugin imported before says so, in the list

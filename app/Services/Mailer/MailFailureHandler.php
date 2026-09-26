@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace BooleanSmtp\Services\Mailer;
 
-use BooleanSmtp\Contracts\Editions\SenderRouterContract;
+use BooleanSmtp\Services\Senders\SenderRouter;
 use BooleanSmtp\Core\Foundation\Application;
 use BooleanSmtp\Models\EmailLog;
 use BooleanSmtp\Repositories\EmailLogRepository;
@@ -125,7 +125,7 @@ class MailFailureHandler
         // The site's sender-routing policy names the connection to try at once: by default the
         // fallback connection, when fallback is switched on; never one this message failed on.
         $pending    = $this->pendingLog();
-        $router     = $this->app->make(SenderRouterContract::class);
+        $router     = $this->app->make(SenderRouter::class);
         $tried      = $this->previouslyTried($pending);
         $fallbackId = (int) $router->immediateFallback($lastId, $tried);
         if ($fallbackId <= 0) {

@@ -64,24 +64,13 @@ final class OAuthProviderRegistry {
 
         self::registerProvider('outlook', [
             'name'                   => 'Microsoft Outlook / Office 365',
-            'delivery_modes'         => ['api', 'one_click'],
+            'delivery_modes'         => ['api'],
             'token_field'            => 'access_token',
             'refresh_token_field'    => 'refresh_token',
             'expiration_field'       => 'token_expires_at',
             'api_class'              => 'BooleanSmtp\Services\Mailer\Api\MicrosoftGraphMailSender',
             'supports_oauth_refresh' => true,
             'refresh_endpoint'       => 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
-        ]);
-
-        self::registerProvider('zoho', [
-            'name'                   => 'Zoho Mail',
-            'delivery_modes'         => ['api'],
-            'token_field'            => 'access_token',
-            'refresh_token_field'    => 'refresh_token',
-            'expiration_field'       => 'token_expires_at',
-            'api_class'              => 'BooleanSmtp\Services\Mailer\Api\ZohoApiSender',
-            'supports_oauth_refresh' => true,
-            'refresh_endpoint'       => 'https://accounts.zoho.com/oauth/v2/token'
         ]);
 
         /**

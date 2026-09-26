@@ -23,7 +23,7 @@ use BooleanSmtp\Services\Mailer\MailerManager;
 use BooleanSmtp\Services\Mailer\SupervisedSend;
 use BooleanSmtp\Services\Mailer\TestEmailRenderer;
 use BooleanSmtp\Services\Onboarding\OnboardingState;
-use BooleanSmtp\Support\Debug\WordPressDebugLogger;
+use BooleanSmtp\Support\Debug\ApiDebugResponse;
 
 /**
  * Sends a real test email through `wp_mail()` and reports how it was delivered.
@@ -38,15 +38,16 @@ class TestEmailController extends Controller {
      * override, sends a real test message through `wp_mail()`, records the outcome on the
      * resolved connection's health status, and returns delivery details. When the "Test Email
      * Activity Console" setting is on, also captures a step-by-step send log and, for developers
-     * with the API-debug filter enabled, the raw provider request/response.
+     * with the API-debug filter enabled, the raw provider request/response. An inactive connection
+     * is accepted only when it is the saved onboarding draft and the request marks that test.
      *
      * @since 1.0.0
      *
-     * @param SendTestEmailRequest $request Request carrying `to`, `subject`, `html`, `multipart`, and an
-     *                          optional `connection_id`.
+     * @param SendTestEmailRequest $request Request carrying `to`, `subject`, `html`, `multipart`, an
+     *                          optional `connection_id`, and an onboarding-draft test marker.
      * @return JsonResponse `sent`, `to`, `subject`, `delivery_time_ms`, `requested_connection_id`,
-     *                       `used_connection_id`, `error` (null when sent; the raw failure text only
-     *                       while the diagnostic channel is on), and (when enabled) `debug_log`,
+     *                       `used_connection_id`, `error` (null when sent; safe Graph status and code
+     *                       on failure, or raw failure text while diagnostic mode is on), and (when enabled) `debug_log`,
      *                       `resolved_mailer`, and `api_debug`.
      */
     public function send(SendTestEmailRequest $request): JsonResponse {
@@ -56,6 +57,19 @@ class TestEmailController extends Controller {
         $multipartOverride = $request->has('multipart') ? (bool) $request->get('multipart') : null;
         $requestedConnectionId = (int) $request->get('connection_id', 0);
 
+        if ($requestedConnectionId > 0) {
+            $connection = $this->make(ConnectionRepository::class)->find($requestedConnectionId);
+            $draftId    = $this->make(OnboardingState::class)->all()['draft_connection_id'];
+            $isOnboardingDraft = filter_var($request->get('onboarding_draft', false), FILTER_VALIDATE_BOOLEAN)
+                && $draftId === $requestedConnectionId;
+
+            if (!$connection || (!(bool) $connection->is_active && !$isOnboardingDraft)) {
+                return $this->validationError([
+                    'connection_id' => ['Select an active mailer. An inactive onboarding draft can only be tested from setup.']
+                ]);
+            }
+        }
+
         $rendered = $this->make(TestEmailRenderer::class)->render(
             $requestedConnectionId > 0 ? $requestedConnectionId : null
         );
@@ -63,7 +77,7 @@ class TestEmailController extends Controller {
 
         $headers = $isHtml ? ['Content-Type: text/html; charset=UTF-8'] : [];
 
-        $apiDebugEnabled    = WordPressDebugLogger::canExposeApiDebugResponse();
+        $apiDebugEnabled    = ApiDebugResponse::enabled();
         $settingsRepo       = $this->make(Settings::class);
         $showActivityConsole = (bool) $settingsRepo->get('show_test_email_console');
         $debugger           = $showActivityConsole ? $this->make(SmtpActivityCapture::class) : null;
@@ -88,7 +102,7 @@ class TestEmailController extends Controller {
         $startTime = microtime(true);
         $outcome   = $this->make(SupervisedSend::class)->run(
             static fn (): bool => (bool) wp_mail($to, $subject, $body, $headers),
-            $apiDebugEnabled
+            true
         );
         $debugLog  = $debugger !== null ? $debugger->stopCapture() : [];
 
@@ -101,6 +115,7 @@ class TestEmailController extends Controller {
         $resolvedMailer          = $outcome->resolvedMailer;
         $capturedApiDebug        = $outcome->apiDebug;
         $lastWpMailFailedMessage = $outcome->failureMessage;
+        $safeProviderFailure     = $sent ? null : self::safeGraphFailure($capturedApiDebug);
 
 
         // Inline "curl -v"-style raw HTTP details into Activity Console.
@@ -179,11 +194,11 @@ class TestEmailController extends Controller {
             'delivery_time_ms'        => $elapsed,
             'requested_connection_id' => $requestedConnectionId > 0 ? $requestedConnectionId : null,
             'used_connection_id'      => $usedConnectionId,
-            // The raw failure text may carry a provider response; it is exposed only when the
-            // diagnostic channel is on, the same rule the connection probe applies.
+            // Provider response bodies stay behind the diagnostic channel. Otherwise expose
+            // only the bounded Graph status and code captured for this test attempt.
             'error'                   => $sent
                 ? null
-                : ($apiDebugEnabled ? self::wpMailFailureMessage($lastWpMailFailedMessage) : 'The test email was not accepted. Check the connection settings and try again.'),
+                : ($apiDebugEnabled ? self::wpMailFailureMessage($lastWpMailFailedMessage) : ($safeProviderFailure ?? 'The test email was not accepted. Check the connection settings and try again.')),
         ];
 
         if ($showActivityConsole) {
@@ -209,10 +224,65 @@ class TestEmailController extends Controller {
                 }
             }
 
-            WordPressDebugLogger::mergeApiDebugIntoDataArray($response);
+            ApiDebugResponse::extend($response);
         }
 
         return $this->ok($response, $sent ? 'Test email sent successfully.' : 'Test email failed to send.');
+    }
+
+    /**
+     * Describe Graph's failed send stages without exposing provider bodies or request data.
+     *
+     * @since 1.0.0
+     *
+     * @param array<string, mixed>|null $debug Captured provider diagnostic payload.
+     * @return string|null Safe Graph failure description, or null when unavailable.
+     */
+    private static function safeGraphFailure(?array $debug): ?string {
+        if ($debug === null || ($debug['provider'] ?? null) !== 'outlook') {
+            return null;
+        }
+
+        $stages = [];
+        if (isset($debug['initial_json_error']) && \is_array($debug['initial_json_error'])) {
+            $initial = self::safeGraphAttempt($debug['initial_json_error'], 'JSON');
+            if ($initial !== null) {
+                $stages[] = $initial;
+            }
+        }
+
+        $final = self::safeGraphAttempt($debug, $stages !== [] ? 'MIME retry' : 'send');
+        if ($final !== null) {
+            $stages[] = $final;
+        }
+
+        return $stages !== []
+            ? 'Microsoft Graph test send failed (' . implode('; ', $stages) . '). Review the reported send details.'
+            : null;
+    }
+
+    /**
+     * Format one Graph attempt using only a bounded HTTP status and error identifier.
+     *
+     * @since 1.0.0
+     *
+     * @param array<string, mixed> $attempt Provider attempt metadata.
+     * @param string $label Stage label for the message.
+     * @return string|null Safe stage description, or null when no safe detail exists.
+     */
+    private static function safeGraphAttempt(array $attempt, string $label): ?string {
+        $status = (int) ($attempt['status'] ?? 0);
+        $rawCode = $attempt['provider_error_code'] ?? '';
+        $code = \is_string($rawCode) ? $rawCode : '';
+        $parts = [];
+        if ($status >= 100 && $status <= 599) {
+            $parts[] = 'HTTP ' . $status;
+        }
+        if (preg_match('/^[A-Za-z][A-Za-z0-9._-]{0,79}$/', $code) === 1) {
+            $parts[] = $code;
+        }
+
+        return $parts !== [] ? $label . ': ' . implode(' ', $parts) : null;
     }
 
     /**

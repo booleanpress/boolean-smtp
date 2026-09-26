@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
  *
  * Props:
  *   - connectionId: Connection ID to fetch refresh history for
- *   - driver: OAuth provider (google, outlook, zoho)
+ *   - driver: OAuth provider (google, outlook)
  *   - onRefresh: Callback when history is manually refreshed
  */
 function OAuthRefreshHistoryPanelContent({ connectionId, driver, onRefresh }) {

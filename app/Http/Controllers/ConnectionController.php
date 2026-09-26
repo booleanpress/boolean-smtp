@@ -16,6 +16,8 @@ use BooleanSmtp\Core\Http\JsonResponse;
 use BooleanSmtp\Core\Http\Request;
 use BooleanSmtp\Http\Requests\UpdateConnectionRequest;
 use BooleanSmtp\Http\Requests\StoreConnectionRequest;
+use BooleanSmtp\Http\Requests\StageOAuthConnectionRequest;
+use BooleanSmtp\Http\Requests\FinalizeOAuthConnectionRequest;
 use BooleanSmtp\Http\Concerns\ResolvesPagination;
 use BooleanSmtp\Core\Database\Schema\Schema;
 use BooleanSmtp\Contracts\EncryptorContract;
@@ -24,18 +26,20 @@ use BooleanSmtp\Repositories\ConnectionRepository;
 use BooleanSmtp\Repositories\OAuthRefreshLogRepository;
 use BooleanSmtp\Services\Connection\ConnectionHealthProbe;
 use BooleanSmtp\Services\Debug\SmtpActivityCapture;
-use BooleanSmtp\Services\Editions\SenderCandidate;
-use BooleanSmtp\Services\Editions\SenderGuard;
-use BooleanSmtp\Services\Editions\SenderNotices;
+use BooleanSmtp\Services\Senders\SenderCandidate;
+use BooleanSmtp\Services\Senders\SenderGuard;
+use BooleanSmtp\Services\Senders\SenderNotices;
 use BooleanSmtp\Services\Mailer\Api\SesApiSender;
 use BooleanSmtp\Services\Mailer\MailerManager;
 use BooleanSmtp\Services\Mailer\SupervisedSend;
 use BooleanSmtp\Services\Mailer\TestEmailRenderer;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthExchangeException;
 use BooleanSmtp\Services\Mailer\OAuth\OAuthManualTokenExchange;
+use BooleanSmtp\Services\Mailer\OAuth\OAuthReturnGuard;
+use BooleanSmtp\Services\Mailer\OAuth\OAuthPendingConnection;
 use BooleanSmtp\Services\Settings\CredentialSourceDetector;
 use BooleanSmtp\Services\Settings\ConstantSettingsResolver;
-use BooleanSmtp\Support\Debug\WordPressDebugLogger;
+use BooleanSmtp\Support\Debug\ApiDebugResponse;
 use BooleanSmtp\Support\WordPressMailerLoader;
 use BooleanSmtp\Core\Foundation\Application;
 
@@ -95,7 +99,15 @@ class ConnectionController extends Controller {
         $id         = (int) $request->param('id');
         $connection = $this->connections->findOrFail($id);
 
-        return $this->ok($this->buildConnectionResponse($connection));
+        $data = $this->buildConnectionResponse($connection);
+        if ((bool) $connection->is_active && \in_array((string) $connection->driver, ['google', 'outlook'], true)) {
+            $staged = $this->make(OAuthPendingConnection::class)->get($id);
+            $data['oauth_pending'] = $staged !== null
+                ? $this->pendingOAuthResponse($staged, (string) $connection->driver)
+                : null;
+        }
+
+        return $this->ok($data);
     }
 
     /**
@@ -128,6 +140,11 @@ class ConnectionController extends Controller {
             'name', 'driver', 'settings', 'priority'
         ]));
 
+        $driverError = $this->assertDriverRegistered((string) ($data['driver'] ?? ''));
+        if ($driverError !== null) {
+            return $driverError;
+        }
+
         $modeError = $this->assertDeliveryModeOffered((string) ($data['driver'] ?? ''), (array) ($data['settings'] ?? []));
         if ($modeError !== null) {
             return $modeError;
@@ -154,11 +171,19 @@ class ConnectionController extends Controller {
             $data['settings'] = $this->prepareSettingsForStorage((string) ($data['driver'] ?? ''), $settings);
         }
 
+        $active = filter_var($request->get('is_active', true), FILTER_VALIDATE_BOOLEAN);
+        if ($active) {
+            $oauthActivationError = $this->validateOAuthActivation((string) ($data['driver'] ?? ''), $settings);
+            if ($oauthActivationError !== null) {
+                return $oauthActivationError;
+            }
+        }
+
         if (isset($data['settings']) && is_array($data['settings'])) {
             $data['settings'] = $this->encryptor->encryptArray($data['settings']);
         }
 
-        $data['is_active']     = $request->get('is_active', true);
+        $data['is_active']     = $active;
         $data['priority']      = (int) $request->get('priority', 0);
         $data['health_status'] = 'unknown';
 
@@ -208,6 +233,20 @@ class ConnectionController extends Controller {
 
         $data = $request->only(['name', 'driver', 'settings', 'is_active', 'priority']);
 
+        if ((bool) $existing->is_active && \in_array((string) $existing->driver, ['google', 'outlook'], true)
+            && (string) ($this->decryptedConnectionSettings($existing)['delivery_mode'] ?? '') === 'api'
+            && (!array_key_exists('is_active', $data) || filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN))
+            && array_key_exists('driver', $data) && (string) $data['driver'] !== (string) $existing->driver) {
+            return $this->validationError(['driver' => 'Stage and authorize a replacement before changing an active OAuth mailer.']);
+        }
+
+        if (array_key_exists('driver', $data) && (string) $data['driver'] !== (string) $existing->driver) {
+            $driverError = $this->assertDriverRegistered((string) $data['driver']);
+            if ($driverError !== null) {
+                return $driverError;
+            }
+        }
+
         $senderError = $this->checkSenderOnUpdate($existing, $data);
         if ($senderError !== null) {
             return $senderError;
@@ -229,7 +268,34 @@ class ConnectionController extends Controller {
             $data['settings'] = $this->preserveOAuthClientSecretField($existing, $data['settings']);
             $data['settings'] = $this->preserveOAuthTokenFields($existing, $data['settings']);
             $data['settings'] = $this->preserveMaskedSecrets($existing, $data['settings']);
-            $oauthGuardError  = $this->validateOAuthTokenGuard($existing, $data['settings']);
+            // An inactive draft may change OAuth applications; its old grant must not travel to
+            // the new client. Sender-only edits keep the grant for verified aliases.
+            if (!(bool) $existing->is_active && \in_array($driver, ['google', 'outlook'], true)) {
+                $clientChanged = false;
+                foreach (['client_id', 'client_secret', 'tenant_id', 'delivery_mode'] as $key) {
+                    if ((string) ($data['settings'][$key] ?? '') !== (string) ($existingSettings[$key] ?? '')) {
+                        $clientChanged = true;
+                        break;
+                    }
+                }
+                if ($clientChanged) {
+                    if (array_key_exists('is_active', $data) && filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN)) {
+                        return $this->validationError(['is_active' => 'Authorize the changed OAuth application before activating this mailer.']);
+                    }
+                    foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email'] as $key) {
+                        unset($data['settings'][$key]);
+                    }
+                }
+            }
+            $activeEditError = $this->validateActiveOAuthEdit($existing, $data);
+            if ($activeEditError !== null) {
+                return $activeEditError;
+            }
+            $oauthGuardError  = $this->validateOAuthTokenGuard(
+                $existing,
+                $data['settings'],
+                array_key_exists('is_active', $data) ? filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN) : (bool) $existing->is_active
+            );
             if ($oauthGuardError !== null) {
                 return $oauthGuardError;
             }
@@ -241,11 +307,25 @@ class ConnectionController extends Controller {
             $data['settings'] = $this->prepareSettingsForStorage($driver, $data['settings']);
         }
 
+        if (!array_key_exists('settings', $data) && array_key_exists('is_active', $data)
+            && filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN)) {
+            $oauthActivationError = $this->validateOAuthActivation(
+                (string) ($data['driver'] ?? $existing->driver),
+                $this->decryptedConnectionSettings($existing)
+            );
+            if ($oauthActivationError !== null) {
+                return $oauthActivationError;
+            }
+        }
+
         if (isset($data['settings']) && is_array($data['settings'])) {
             $data['settings'] = $this->encryptor->encryptArray($data['settings']);
         }
 
         $connection = $this->connections->update($id, $data);
+        if (!(bool) $connection->is_active) {
+            $this->make(OAuthPendingConnection::class)->delete($id);
+        }
 
         /**
          * Fires after a connection has been updated through the REST API.
@@ -265,6 +345,138 @@ class ConnectionController extends Controller {
         ]);
 
         return $this->ok($this->buildConnectionResponse($connection), 'Connection updated.');
+    }
+
+    /**
+     * Stage changes to an active OAuth mailer without replacing its delivery credentials.
+     *
+     * @since 1.0.0
+     *
+     * @param StageOAuthConnectionRequest $request New mailer details and OAuth app settings.
+     * @return JsonResponse The staged status, or a validation error.
+     */
+    public function stageOAuthConnection(StageOAuthConnectionRequest $request): JsonResponse {
+        $id = (int) $request->param('id');
+        $existing = $this->connections->findOrFail($id);
+        $driver = (string) $existing->driver;
+        $incoming = $request->only(['name', 'driver', 'settings', 'priority']);
+
+        if (!(bool) $existing->is_active || !\in_array($driver, ['google', 'outlook'], true)
+            || (string) ($incoming['driver'] ?? '') !== $driver
+            || (string) ($incoming['settings']['delivery_mode'] ?? '') !== 'api') {
+            return $this->validationError(['settings.delivery_mode' => 'Staging is available for active Google and Microsoft API mailers only.']);
+        }
+
+        $pendingStore = $this->make(OAuthPendingConnection::class);
+        $prior = $pendingStore->get($id);
+        $settings = (array) $incoming['settings'];
+        $settings = $this->preserveOAuthIdentityFields($existing, $settings);
+        $maskedPendingSecret = trim((string) ($settings['client_secret'] ?? ''));
+        $samePendingApp = $prior !== null
+            && (string) ($settings['client_id'] ?? '') === (string) ($prior['settings']['client_id'] ?? '')
+            && (string) ($settings['tenant_id'] ?? '') === (string) ($prior['settings']['tenant_id'] ?? '');
+        if ($this->isLikelyMaskedSecretPlaceholder($maskedPendingSecret) && $samePendingApp) {
+            $settings['client_secret'] = (string) ($prior['settings']['client_secret'] ?? '');
+        }
+        $liveSettings = $this->decryptedConnectionSettings($existing);
+        $appChanged = (string) ($settings['client_id'] ?? '') !== (string) ($liveSettings['client_id'] ?? '')
+            || (string) ($settings['tenant_id'] ?? '') !== (string) ($liveSettings['tenant_id'] ?? '');
+        if ($appChanged && (trim((string) ($settings['client_secret'] ?? '')) === ''
+            || $this->isLikelyMaskedSecretPlaceholder((string) $settings['client_secret']))) {
+            return $this->validationError(['settings.client_secret' => 'Enter the new application client secret before authorizing.']);
+        }
+        $settings = $this->preserveOAuthClientSecretField($existing, $settings);
+
+        foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email'] as $key) {
+            unset($settings[$key]);
+        }
+
+        $previousSettings = is_array($prior['settings'] ?? null) ? $prior['settings'] : [];
+        if ($previousSettings !== [] && $this->sameOAuthClient($settings, $previousSettings)) {
+            foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email'] as $key) {
+                if (array_key_exists($key, $previousSettings)) {
+                    $settings[$key] = $previousSettings[$key];
+                }
+            }
+        }
+
+        $modeError = $this->assertDeliveryModeOffered($driver, $settings);
+        if ($modeError !== null) {
+            return $modeError;
+        }
+        $validationError = $this->validateTransportSettings($request, $driver, $settings, false);
+        if ($validationError !== null) {
+            return $validationError;
+        }
+        $senderError = $this->checkSenderOnUpdate($existing, [
+            'name' => $incoming['name'], 'driver' => $driver, 'settings' => $settings
+        ]);
+        if ($senderError !== null) {
+            return $senderError;
+        }
+
+        $settings = $this->prepareSettingsForStorage($driver, $settings);
+        $staged = [
+            'name' => (string) $incoming['name'],
+            'priority' => (int) ($incoming['priority'] ?? $existing->priority ?? 0),
+            'settings' => $settings,
+        ];
+        if (!$pendingStore->put($id, $staged)) {
+            return $this->error('Could not save the pending mailer settings. Try again.', 503);
+        }
+
+        return $this->ok(['oauth_pending' => $this->pendingOAuthResponse($staged, $driver)], 'Mailer changes staged.');
+    }
+
+    /**
+     * Commit authorized staged settings to the active connection in one update.
+     *
+     * @since 1.0.0
+     *
+     * @param FinalizeOAuthConnectionRequest $request Request carrying the connection id.
+     * @return JsonResponse Updated connection, or an error when the draft expired or is unauthorized.
+     */
+    public function finalizeOAuthConnection(FinalizeOAuthConnectionRequest $request): JsonResponse {
+        $id = (int) $request->param('id');
+        $existing = $this->connections->findOrFail($id);
+        $driver = (string) $existing->driver;
+        $pendingStore = $this->make(OAuthPendingConnection::class);
+        $staged = $pendingStore->get($id);
+        if (!(bool) $existing->is_active || !\in_array($driver, ['google', 'outlook'], true) || $staged === null) {
+            return $this->validationError(['oauth_pending' => 'Pending authorization expired or was not found. Authorize again.']);
+        }
+
+        $settings = (array) $staged['settings'];
+        $grantError = $this->validateOAuthActivation($driver, $settings);
+        if ($grantError !== null) {
+            return $grantError;
+        }
+        $validationError = $this->validateTransportSettings($request, $driver, $settings, false);
+        if ($validationError !== null) {
+            return $validationError;
+        }
+        $senderError = $this->checkSenderOnUpdate($existing, [
+            'name' => (string) $staged['name'], 'driver' => $driver, 'settings' => $settings
+        ]);
+        if ($senderError !== null) {
+            return $senderError;
+        }
+
+        $updated = $this->connections->update($id, [
+            'name' => (string) $staged['name'],
+            'priority' => (int) $staged['priority'],
+            'settings' => $this->encryptor->encryptArray($settings),
+        ]);
+        $pendingStore->delete($id);
+
+        /** This action is documented in update(). */
+        \do_action('boolean_smtp_connection_updated', [
+            'id' => $updated->id,
+            'data' => $updated->toArray(),
+            'timestamp' => time(),
+        ]);
+
+        return $this->ok($this->buildConnectionResponse($updated), 'Mailer saved.');
     }
 
     /**
@@ -297,6 +509,7 @@ class ConnectionController extends Controller {
         ]);
 
         $this->connections->delete($id);
+        $this->make(OAuthPendingConnection::class)->delete($id);
 
         /**
          * Fires after a connection has been deleted.
@@ -352,6 +565,7 @@ class ConnectionController extends Controller {
                 ]);
 
                 $this->connections->delete((int) $id);
+                $this->make(OAuthPendingConnection::class)->delete((int) $id);
                 $count++;
 
                 /** This action is documented in {@see ConnectionController::destroy()}. */
@@ -384,7 +598,7 @@ class ConnectionController extends Controller {
     public function test(Request $request): JsonResponse {
         $id         = (int) $request->param('id');
         $connection = $this->connections->findOrFail($id);
-        $apiDebugEnabled = WordPressDebugLogger::canExposeApiDebugResponse();
+        $apiDebugEnabled = ApiDebugResponse::enabled();
 
         if ($connection->driver === 'php') {
             return $this->testWordPressMailConnection($connection, $id, $apiDebugEnabled);
@@ -410,7 +624,7 @@ class ConnectionController extends Controller {
             if ($apiDebugEnabled) {
                 $payload['api_debug']       = $result['api_debug'] ?? null;
                 $payload['resolved_mailer'] = null;
-                WordPressDebugLogger::mergeApiDebugIntoDataArray($payload);
+                ApiDebugResponse::extend($payload);
             }
 
             return $this->ok($payload, 'Connection test failed.');
@@ -423,7 +637,7 @@ class ConnectionController extends Controller {
             $payload['debug']           = $result['debug'] ?? '';
             $payload['api_debug']       = $result['api_debug'] ?? null;
             $payload['resolved_mailer'] = $result['resolved_mailer'] ?? null;
-            WordPressDebugLogger::mergeApiDebugIntoDataArray($payload);
+            ApiDebugResponse::extend($payload);
         }
 
         return $this->ok($payload, 'Connection test passed.');
@@ -432,16 +646,16 @@ class ConnectionController extends Controller {
     /**
      * Handle `POST /booleansmtp/v1/connections/{id}/verify-credentials`.
      *
-     * Reads `client_id`, `client_secret`, and, per driver, `tenant_id` or `region`. Saves the
-     * OAuth client credentials for a Google, Outlook, or Zoho connection and validates them
-     * without requiring a full delegated-consent round trip: Outlook credentials are checked
-     * against the Microsoft token endpoint directly; Google and Zoho are validated by schema only
-     * and confirmed on the next OAuth authorize/callback.
+     * Reads `client_id`, `client_secret` and, for Outlook, `tenant_id`. Saves the OAuth client
+     * credentials for a Google or Outlook connection and validates them without requiring a full
+     * delegated-consent round trip: Outlook credentials are checked against the Microsoft token
+     * endpoint directly; Google credentials are validated by schema only and confirmed on the
+     * next OAuth authorize/callback.
      *
      * @since 1.0.0
      *
      * @param Request $request Request carrying the connection `id` route parameter and
-     *                          `client_id`, `client_secret`, `tenant_id`, `region`.
+     *                          `client_id`, `client_secret`, `tenant_id`.
      * @return JsonResponse `verified: true` (plus an optional `verification_hint`) on success, or
      *                       a 422 error when the driver is unsupported or verification fails.
      */
@@ -451,23 +665,30 @@ class ConnectionController extends Controller {
         $connection = $this->connections->findOrFail($id);
         $driver     = (string) ($connection->driver ?? '');
         $oauthDriver = $this->normalizeOAuthDriver($driver);
-        $apiDebugEnabled = WordPressDebugLogger::canExposeApiDebugResponse();
+        $apiDebugEnabled = ApiDebugResponse::enabled();
 
         if (!$this->isOAuthDriver($driver)) {
-            return $this->error('Verify credentials is only supported for Google, Outlook, and Zoho connections.', 422);
+            return $this->error('Verify credentials is only supported for Google and Outlook connections.', 422);
         }
 
         $this->validate($request, [
             'client_id'     => 'required|string|max:2048',
             'client_secret' => 'required|string|max:2048',
             'tenant_id'     => 'nullable|string|max:255',
-            'region'        => 'nullable|string|max:32'
         ]);
 
+        $pendingStore = $this->make(OAuthPendingConnection::class);
+        $pending = (bool) $connection->is_active && \in_array($driver, ['google', 'outlook'], true)
+            ? $pendingStore->get($id)
+            : null;
+        if ((bool) $connection->is_active && \in_array($driver, ['google', 'outlook'], true) && $pending === null) {
+            return $this->validationError(['oauth_pending' => 'Save a pending mailer configuration before verifying credentials.']);
+        }
+        $originalSettings = $pending !== null ? (array) $pending['settings'] : $this->decryptedConnectionSettings($connection);
         $settings = MailerManager::prepareDecryptedConnectionSettings(
             $this->make(ConstantSettingsResolver::class),
             $oauthDriver,
-            $this->decryptedConnectionSettings($connection)
+            $originalSettings
         );
         $settings['delivery_mode'] = 'api';
         $settings['client_id']     = trim((string) $request->input('client_id'));
@@ -496,10 +717,9 @@ class ConnectionController extends Controller {
             }
         }
 
-        if ($oauthDriver === 'zoho') {
-            $region = $request->input('region');
-            if ($region !== null && trim((string) $region) !== '') {
-                $settings['region'] = trim((string) $region);
+        if (!$this->sameOAuthClient($settings, $originalSettings)) {
+            foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email'] as $key) {
+                unset($settings[$key]);
             }
         }
 
@@ -528,9 +748,16 @@ class ConnectionController extends Controller {
             $verificationHint = isset($verification['hint']) ? (string) $verification['hint'] : null;
         }
 
-        $this->connections->update($id, [
-            'settings' => $this->encryptor->encryptArray($settings)
-        ]);
+        if ($pending !== null) {
+            $pending['settings'] = $settings;
+            if (!$pendingStore->put($id, $pending)) {
+                return $this->error('Could not save the pending mailer settings. Try again.', 503);
+            }
+        } else {
+            $this->connections->update($id, [
+                'settings' => $this->encryptor->encryptArray($settings)
+            ]);
+        }
 
         $payload = ['verified' => true];
         if ($verificationHint !== null && $verificationHint !== '') {
@@ -546,8 +773,8 @@ class ConnectionController extends Controller {
      * Handle `POST /booleansmtp/v1/connections/{id}/verify-api-credentials`.
      *
      * Reads `access_key`, `secret`, `region`, `delivery_mode` and an optional `from_email`.
-     * Static-credential connectivity check for drivers that do not use OAuth (currently Amazon
-     * SES) — the equivalent of {@see verifyCredentials()} for an access-key/secret pair instead
+     * Static-credential connectivity check for Amazon SES API mode — the equivalent of
+     * {@see verifyCredentials()} for an access-key/secret pair instead
      * of an OAuth client id/secret. Makes one real, side-effect-free AWS call (`ses:GetSendQuota`)
      * so a bad key, bad secret, wrong region, or an IAM policy with no SES access is caught before
      * a real send is attempted. With `from_email`, a second read-only call
@@ -568,7 +795,7 @@ class ConnectionController extends Controller {
         /** @var Connection $connection */
         $connection = $this->connections->findOrFail($id);
         $driver     = (string) ($connection->driver ?? '');
-        $apiDebugEnabled = WordPressDebugLogger::canExposeApiDebugResponse();
+        $apiDebugEnabled = ApiDebugResponse::enabled();
 
         if ($driver !== 'ses') {
             return $this->error('Credential validation is only available for Amazon SES connections right now.', 422);
@@ -586,8 +813,13 @@ class ConnectionController extends Controller {
         $region       = trim((string) $request->input('region')) ?: 'us-east-1';
 
         $stored             = $this->decryptedConnectionSettings($connection);
-        $storedAccessKeyKey = $deliveryMode === 'smtp' ? 'smtp_username' : 'api_access_key';
-        $storedSecretKey    = $deliveryMode === 'smtp' ? 'smtp_password' : 'api_secret';
+        if ($deliveryMode !== 'api' || (string) ($stored['delivery_mode'] ?? 'api') !== 'api') {
+            return $this->validationError([
+                'delivery_mode' => 'AWS API validation is available for SES API mode only. Save the SMTP mailer and send a test email to check SMTP credentials.'
+            ]);
+        }
+        $storedAccessKeyKey = 'api_access_key';
+        $storedSecretKey    = 'api_secret';
 
         $incomingAccessKey = trim((string) $request->input('access_key'));
         $incomingSecret    = trim((string) $request->input('secret'));
@@ -648,15 +880,15 @@ class ConnectionController extends Controller {
     /**
      * Handle `POST /booleansmtp/v1/connections/{id}/oauth-token`.
      *
-     * Reads `token` (a pasted authorization code, refresh token, or One Click bearer token) and
+     * Reads `token` (a pasted authorization code or refresh token) and
      * an optional `delivery_mode`, exchanges or applies it as needed for the connection's driver,
      * validates the resulting settings, and stores them encrypted. The connection's stored delivery
      * mode must still be one its transport offers.
      *
      * @since 1.0.0
      *
-     * @param Request $request Request carrying the connection `id` route parameter, `token`, and
-     *                          `delivery_mode`.
+     * @param Request $request Request carrying the connection `id` route parameter, `token`,
+     *                         `delivery_mode`, and signed `oauth_state` for Google/Microsoft API mode.
      * @return JsonResponse `{ success: true }` on success, or a 422 error when the driver does not
      *                       support OAuth, the provider refused the exchange (its reason in the
      *                       message), the pasted value cannot be processed, or validation fails.
@@ -669,17 +901,23 @@ class ConnectionController extends Controller {
         $oauthDriver = $this->normalizeOAuthDriver($driver);
 
         if (!$this->isOAuthDriver($driver)) {
-            return $this->error('OAuth token is only supported for Google, Outlook, and Zoho connections.', 422);
+            return $this->error('OAuth token is only supported for Google and Outlook connections.', 422);
         }
 
         $this->validate($request, [
             'token' => 'required|string|min:4|max:8192'
         ]);
 
+        $storedSettings = $this->decryptedConnectionSettings($connection);
+        $pendingStore = $this->make(OAuthPendingConnection::class);
+        $pending = (bool) $connection->is_active && \in_array($oauthDriver, ['google', 'outlook'], true)
+            ? $pendingStore->get($id)
+            : null;
+
         $settings = MailerManager::prepareDecryptedConnectionSettings(
             $this->make(ConstantSettingsResolver::class),
             $oauthDriver,
-            $this->decryptedConnectionSettings($connection)
+            $pending !== null ? (array) $pending['settings'] : $storedSettings
         );
 
         // This endpoint saves directly, so it checks the connection's stored delivery mode the
@@ -689,8 +927,30 @@ class ConnectionController extends Controller {
             return $modeError;
         }
 
-        $deliveryMode = (string) ($request->input('delivery_mode') ?? ($settings['delivery_mode'] ?? 'api'));
+        if ((bool) $connection->is_active && \in_array($oauthDriver, ['google', 'outlook'], true)
+            && (string) ($settings['delivery_mode'] ?? '') === 'api' && $pending === null) {
+            return $this->validationError(['oauth_pending' => 'Stage the active mailer changes before authorizing again.']);
+        }
+
+        $storedMode = (string) ($settings['delivery_mode'] ?? 'api');
+        $deliveryMode = (string) ($request->input('delivery_mode') ?? $storedMode);
+        if ($deliveryMode !== $storedMode) {
+            return $this->validationError(['delivery_mode' => 'The token must match the saved mailer delivery mode.']);
+        }
         $pasted = (string) $request->input('token');
+
+        $state = '';
+        $returnGuard = null;
+        if (\in_array($oauthDriver, ['google', 'outlook'], true) && $deliveryMode === 'api') {
+            $state = (string) $request->input('oauth_state', '');
+            $provider = $oauthDriver === 'outlook' ? 'microsoft' : 'google';
+            $returnGuard = $this->make(OAuthReturnGuard::class);
+            if (!$returnGuard->accepts($state, $id, $provider)) {
+                return $this->validationError([
+                    'oauth_state' => 'Authorization expired, was already used, or does not belong to this mailer. Authorize again.'
+                ]);
+            }
+        }
 
         try {
             $merged = OAuthManualTokenExchange::applyPastedToken($oauthDriver, $pasted, $settings, $deliveryMode);
@@ -698,10 +958,6 @@ class ConnectionController extends Controller {
             return $this->error(sprintf('The provider refused the authorization: %s', $e->getMessage()), 422);
         }
         if ($merged === null) {
-            if ($oauthDriver === 'outlook' && $deliveryMode === 'one_click') {
-                return $this->error('Could not process the pasted One Click token. Paste the full bearer token from the proxy callback flow.', 422);
-            }
-
             return $this->error('Could not process the pasted value. Paste the authorization code or OAuth refresh token from the provider.', 422);
         }
 
@@ -716,9 +972,20 @@ class ConnectionController extends Controller {
             return $this->validationError($errors);
         }
 
-        $this->connections->update($id, [
-            'settings' => $this->encryptor->encryptArray($settings)
-        ]);
+        if ($returnGuard !== null && !$returnGuard->consume($state)) {
+            return $this->error('The authorization could not be completed. Authorize again.', 503);
+        }
+
+        if ($pending !== null) {
+            $pending['settings'] = $settings;
+            if (!$pendingStore->put($id, $pending)) {
+                return $this->error('Could not save the pending authorization. Authorize again.', 503);
+            }
+        } else {
+            $this->connections->update($id, [
+                'settings' => $this->encryptor->encryptArray($settings)
+            ]);
+        }
 
         return $this->ok(['success' => true], 'OAuth token saved.');
     }
@@ -896,7 +1163,19 @@ class ConnectionController extends Controller {
             return [];
         }
 
-        $decrypted  = $this->encryptor->decryptArray($settings);
+        return $this->maskSettings((string) $connection->driver, $this->encryptor->decryptArray($settings));
+    }
+
+    /**
+     * Mask secrets and omit tokens from decrypted live or staged settings.
+     *
+     * @since 1.0.0
+     *
+     * @param string               $driver    Connection driver.
+     * @param array<string, mixed> $decrypted Decrypted settings.
+     * @return array<string, mixed> Browser-safe settings.
+     */
+    private function maskSettings(string $driver, array $decrypted): array {
         $resolver   = $this->make(\BooleanSmtp\Services\Settings\ConstantSettingsResolver::class);
         $masked     = [];
         $hiddenKeys = ['access_token', 'refresh_token', 'token_expires_at'];
@@ -906,7 +1185,7 @@ class ConnectionController extends Controller {
                 continue;
             }
 
-            if ($resolver->isDefined((string) $connection->driver, $key)) {
+            if ($resolver->isDefined($driver, $key)) {
                 $masked[$key] = '[defined in wp-config.php / env]';
                 continue;
             }
@@ -926,6 +1205,46 @@ class ConnectionController extends Controller {
         }
 
         return $masked;
+    }
+
+    /**
+     * Build browser-safe status for an active mailer's pending replacement.
+     *
+     * @since 1.0.0
+     *
+     * @param array<string, mixed> $staged Pending configuration.
+     * @param string               $driver Connection driver.
+     * @return array<string, mixed> Masked form details and authorization status.
+     */
+    private function pendingOAuthResponse(array $staged, string $driver): array {
+        $settings = (array) ($staged['settings'] ?? []);
+
+        return [
+            'name' => (string) ($staged['name'] ?? ''),
+            'priority' => (int) ($staged['priority'] ?? 0),
+            'settings' => $this->maskSettings($driver, $settings),
+            'oauth_refresh_available' => trim((string) ($settings['refresh_token'] ?? '')) !== '',
+            'oauth_account_email' => trim((string) ($settings['oauth_account_email'] ?? '')) ?: null,
+        ];
+    }
+
+    /**
+     * Decide whether a staged grant still belongs to the same OAuth application.
+     *
+     * @since 1.0.0
+     *
+     * @param array<string, mixed> $incoming New staged settings.
+     * @param array<string, mixed> $previous Earlier staged settings.
+     * @return bool Whether the stored grant can be retained for sender-only edits.
+     */
+    private function sameOAuthClient(array $incoming, array $previous): bool {
+        foreach (['client_id', 'client_secret', 'tenant_id', 'delivery_mode', 'from_email'] as $key) {
+            if ((string) ($incoming[$key] ?? '') !== (string) ($previous[$key] ?? '')) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -978,7 +1297,7 @@ class ConnectionController extends Controller {
         // Secrets that no longer decrypt (the key changed, the row came from another site) are
         // blanked in `settings`; their names are listed so the form can ask for them again.
         $data['decrypt_failed']  = array_values((array) ($this->decryptedConnectionSettings($connection)[\BooleanSmtp\Services\Encryption\AesEncryptor::DECRYPT_FAILED_KEY] ?? []));
-        if (($data['health_status'] ?? '') === 'error' && !WordPressDebugLogger::canExposeApiDebugResponse()) {
+        if (($data['health_status'] ?? '') === 'error' && !ApiDebugResponse::enabled()) {
             // last_error may contain a provider raw HTTP response from an earlier
             // health or connection test. Do not reintroduce it through the normal
             // connection-list response after the diagnostic endpoint omits it.
@@ -1066,21 +1385,9 @@ class ConnectionController extends Controller {
         }
 
         $existingSettings = $this->decryptedConnectionSettings($existing);
-        foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email', 'one_click_bearer_token', 'one_click_status'] as $tokenKey) {
+        foreach (['access_token', 'refresh_token', 'token_expires_at', 'oauth_account_email'] as $tokenKey) {
             if (!\array_key_exists($tokenKey, $incoming) && \array_key_exists($tokenKey, $existingSettings)) {
                 $incoming[$tokenKey] = $existingSettings[$tokenKey];
-            }
-        }
-
-        if (\array_key_exists('one_click_bearer_token', $incoming)) {
-            $incomingToken = trim((string) $incoming['one_click_bearer_token']);
-            if ($this->isLikelyMaskedSecretPlaceholder($incomingToken)) {
-                $existingToken = trim((string) ($existingSettings['one_click_bearer_token'] ?? ''));
-                if ($existingToken !== '' && !$this->isLikelyMaskedSecretPlaceholder($existingToken)) {
-                    $incoming['one_click_bearer_token'] = $existingToken;
-                } else {
-                    unset($incoming['one_click_bearer_token']);
-                }
             }
         }
 
@@ -1105,13 +1412,9 @@ class ConnectionController extends Controller {
 
         $existingSettings = $this->decryptedConnectionSettings($existing);
 
-        // 'client_secret' (delegated api mode) and 'app_client_secret' (Outlook's Pro-only
-        // Application Permission mode -- a deliberately separate field/credential from the
-        // delegated mode's, see MicrosoftSchemaExtender's docblock) both need this same
-        // masked-placeholder handling, or editing any other field on an existing app_permission
-        // connection without retyping the secret would silently overwrite the real stored secret
-        // with the UI's masked placeholder string.
-        foreach (['client_secret', 'app_client_secret'] as $secretKey) {
+        // Editing any other field without retyping the secret must not overwrite the real stored
+        // secret with the UI's masked placeholder string.
+        foreach (['client_secret'] as $secretKey) {
             if (!array_key_exists($secretKey, $incoming)) {
                 continue;
             }
@@ -1189,7 +1492,7 @@ class ConnectionController extends Controller {
 
         $existingSettings = $this->decryptedConnectionSettings($existing);
 
-        foreach (['client_id', 'tenant_id', 'region', 'app_client_id', 'app_tenant_id'] as $key) {
+        foreach (['client_id', 'tenant_id', 'region'] as $key) {
             if (!array_key_exists($key, $incoming)) {
                 if (array_key_exists($key, $existingSettings)) {
                     $incoming[$key] = $existingSettings[$key];
@@ -1213,10 +1516,11 @@ class ConnectionController extends Controller {
      *
      * @param Connection            $existing Connection as currently stored.
      * @param array<string, mixed>  $incoming Incoming settings from the update request.
+     * @param bool                  $active   Whether the updated connection will be active.
      * @return JsonResponse|null A 422 validation error when the update would leave API mode
      *                            without a refresh token, otherwise null.
      */
-    private function validateOAuthTokenGuard(Connection $existing, array $incoming): ?JsonResponse {
+    private function validateOAuthTokenGuard(Connection $existing, array $incoming, bool $active): ?JsonResponse {
         $driver = (string) ($existing->driver ?? '');
         if (!$this->isOAuthDriver($driver)) {
             return null;
@@ -1237,10 +1541,67 @@ class ConnectionController extends Controller {
         }
 
         $effectiveRefresh = $incomingRefresh !== null ? $incomingRefresh : $existingRefresh;
-        if ($effectiveRefresh === '') {
+        if ($active && $effectiveRefresh === '') {
             return $this->validationError([
                 'refresh_token' => 'API mode requires a valid refresh token. Verify credentials and save OAuth token first.'
             ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Prevent an OAuth API draft without a renewable grant from entering automatic routing.
+     *
+     * @since 1.0.0
+     *
+     * @param string               $driver   Connection driver.
+     * @param array<string, mixed> $settings Effective decrypted settings.
+     * @return JsonResponse|null Validation error when authorization is incomplete.
+     */
+    private function validateOAuthActivation(string $driver, array $settings): ?JsonResponse {
+        if (!$this->isOAuthDriver($driver) || (string) ($settings['delivery_mode'] ?? '') !== 'api') {
+            return null;
+        }
+
+        if (trim((string) ($settings['refresh_token'] ?? '')) !== '') {
+            return null;
+        }
+
+        return $this->validationError([
+            'is_active' => 'Authorize this mailer and save its renewable OAuth grant before activating it.'
+        ]);
+    }
+
+    /**
+     * Keep working OAuth credentials unchanged while an active mailer is reconnected.
+     *
+     * @since 1.0.0
+     *
+     * @param Connection           $existing Active connection being edited.
+     * @param array<string, mixed> $data     Incoming update fields after masked values are restored.
+     * @return JsonResponse|null Error when the update should use the staged OAuth flow.
+     */
+    private function validateActiveOAuthEdit(Connection $existing, array $data): ?JsonResponse {
+        if (!(bool) $existing->is_active || !\in_array((string) $existing->driver, ['google', 'outlook'], true)) {
+            return null;
+        }
+        if (array_key_exists('is_active', $data) && !filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN)) {
+            return null;
+        }
+
+        $saved = $this->decryptedConnectionSettings($existing);
+        if ((string) ($saved['delivery_mode'] ?? '') !== 'api') {
+            return null;
+        }
+
+        $incoming = (array) ($data['settings'] ?? []);
+        foreach (['client_id', 'client_secret', 'tenant_id', 'from_email', 'delivery_mode', 'key_store'] as $key) {
+            if ((string) ($incoming[$key] ?? $saved[$key] ?? '') !== (string) ($saved[$key] ?? '')) {
+                return $this->validationError([
+                    'settings.' . $key => 'Stage and authorize the replacement before changing this active OAuth setting.'
+                ]);
+            }
         }
 
         return null;
@@ -1260,9 +1621,10 @@ class ConnectionController extends Controller {
      * @param Request               $request Current request, used to detect update vs. create.
      * @param string                $driver  Transport driver key.
      * @param array<string, mixed>  $settings Settings to validate.
+     * @param bool                  $relaxOAuthIdentity Whether an existing edit may retain masked identity fields.
      * @return JsonResponse|null A 422 validation error response, or null when settings are valid.
      */
-    private function validateTransportSettings(Request $request, string $driver, array $settings): ?JsonResponse {
+    private function validateTransportSettings(Request $request, string $driver, array $settings, bool $relaxOAuthIdentity = true): ?JsonResponse {
         try {
             $mailer    = $this->make(MailerManager::class);
             $transport = $mailer->resolveTransportByDriver($driver);
@@ -1273,9 +1635,9 @@ class ConnectionController extends Controller {
             // support dot-notation (e.g. settings.client_id). We rely on transport-level
             // validateSettings() instead of framework validation for settings fields.
 
-            // Basic delivery mode guard (prevents accidental SMTP/API mismatch).
+            // Delivery mode guard: the plugin's own `smtp` and `api`, or a mode the transport offers.
             $deliveryMode = (string) ($settings['delivery_mode'] ?? 'smtp');
-            if (!in_array($deliveryMode, ['smtp', 'api', 'one_click', 'app_permission'], true)) {
+            if (!in_array($deliveryMode, ['smtp', 'api'], true) && !\array_key_exists($deliveryMode, $transport->getDeliveryModes())) {
                 return $this->validationError(['delivery_mode' => 'Invalid delivery mode.']);
             }
 
@@ -1327,9 +1689,9 @@ class ConnectionController extends Controller {
             // credential identity fields are unchanged/masked in UI.
             $isOAuthDriver = $this->isOAuthDriver($driver);
             $isUpdateFlow  = (int) $request->param('id', 0) > 0;
-            $isApiMode     = \in_array((string) ($settings['delivery_mode'] ?? 'smtp'), ['api', 'app_permission'], true);
-            if ($isOAuthDriver && $isUpdateFlow && $isApiMode && is_array($customErrors)) {
-                foreach (['client_id', 'client_secret', 'tenant_id', 'region', 'app_client_id', 'app_client_secret', 'app_tenant_id'] as $key) {
+            $isApiMode     = (string) ($settings['delivery_mode'] ?? 'smtp') === 'api';
+            if ($relaxOAuthIdentity && $isOAuthDriver && $isUpdateFlow && $isApiMode && is_array($customErrors)) {
+                foreach (['client_id', 'client_secret', 'tenant_id', 'region'] as $key) {
                     unset($customErrors[$key]);
                 }
             }
@@ -1523,6 +1885,25 @@ class ConnectionController extends Controller {
         }
 
         return null;
+    }
+
+    /**
+     * Check that a connection's driver is a registered transport.
+     *
+     * Without this, an unknown driver would be accepted and then resolved to the PHP mail
+     * transport at send time.
+     *
+     * @since 1.0.0
+     *
+     * @param  string $driver Transport driver key.
+     * @return JsonResponse|null A 422 when no transport is registered for the driver, null otherwise.
+     */
+    private function assertDriverRegistered(string $driver): ?JsonResponse {
+        if ($this->make(MailerManager::class)->hasTransport($driver)) {
+            return null;
+        }
+
+        return $this->validationError(['driver' => 'This mail service is not available.'], 'The given data was invalid.');
     }
 
     /**
@@ -1971,10 +2352,10 @@ class ConnectionController extends Controller {
      * @since 1.0.0
      *
      * @param string $driver Driver key to check.
-     * @return bool True for `google`, `outlook`, or `zoho` (including the `gmail` alias).
+     * @return bool True for `google` or `outlook` (including the `gmail` alias).
      */
     private function isOAuthDriver(string $driver): bool {
-        return \in_array($this->normalizeOAuthDriver($driver), ['google', 'outlook', 'zoho'], true);
+        return \in_array($this->normalizeOAuthDriver($driver), ['google', 'outlook'], true);
     }
 
     /**

@@ -12,7 +12,7 @@ declare(strict_types=1);
 namespace BooleanSmtp\Services\Mailer\OAuth;
 
 /**
- * OAuth2 redirect URIs for Google, Microsoft, and Zoho.
+ * OAuth2 redirect URIs for Google and Microsoft.
  *
  * Priority:
  * 1. Per-provider constants when defined (BOOLEANSMTP_GOOGLE_OAUTH_REDIRECT_URI, etc.)
@@ -81,35 +81,11 @@ final class OAuthRedirectUri
     }
 
     /**
-     * Resolve the redirect URI for the Zoho connection flow.
-     *
-     * @since 1.0.0
-     *
-     * @return string
-     */
-    public static function zoho(): string
-    {
-        $default = self::resolveDefault('zoho', 'BOOLEANSMTP_ZOHO_OAUTH_REDIRECT_URI');
-
-        /**
-         * Filters the redirect URI used for the Zoho OAuth2 connection flow.
-         *
-         * Return a different URI to override the resolved default.
-         *
-         * @since 1.0.0
-         *
-         * @param string $default Redirect URI resolved from a constant, a local REST callback, or the OAuth server.
-         * @return string The value to short-circuit with, or the default to run the built-in behaviour.
-         */
-        return (string) \apply_filters('boolean_smtp_zoho_oauth_redirect_uri', $default);
-    }
-
-    /**
      * Resolve the default redirect URI for a provider.
      *
      * @since 1.0.0
      *
-     * @param  string $provider     Provider slug (google, microsoft, zoho).
+     * @param  string $provider     Provider slug (google, microsoft).
      * @param  string $constantName Name of the constant that, when defined, overrides the resolved default.
      * @return string
      */

@@ -36,6 +36,8 @@ $router->post('connections/{id}/test', [\BooleanSmtp\Http\Controllers\Connection
 $router->post('connections/{id}/verify-credentials', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'verifyCredentials']);
 $router->post('connections/{id}/verify-api-credentials', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'verifyApiCredentials']);
 $router->post('connections/{id}/oauth-token', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'saveOAuthToken']);
+$router->post('connections/{id}/oauth-stage', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'stageOAuthConnection']);
+$router->post('connections/{id}/oauth-finalize', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'finalizeOAuthConnection']);
 $router->post('connections/{id}/oauth-refresh-now', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'refreshOAuthNow']);
 $router->get('connections/{id}/oauth-refresh-history', [\BooleanSmtp\Http\Controllers\ConnectionController::class, 'getOAuthRefreshHistory']);
 
@@ -43,13 +45,11 @@ $router->get('connections/{id}/oauth-refresh-history', [\BooleanSmtp\Http\Contro
 $router->get('transports', [\BooleanSmtp\Http\Controllers\TransportController::class, 'index']);
 $router->get('transports/{driver}', [\BooleanSmtp\Http\Controllers\TransportController::class, 'show']);
 
-// OAuth (Google / Microsoft / Zoho) — register redirect URIs in cloud consoles to match get_rest_url(..., 'booleansmtp/v1/oauth/.../callback')
+// OAuth (Google / Microsoft) — register redirect URIs in cloud consoles to match get_rest_url(..., 'booleansmtp/v1/oauth/.../callback')
 $router->get('oauth/google/authorize', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'googleAuthorize']);
 $router->get('oauth/google/callback', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'googleCallback']);
 $router->get('oauth/microsoft/authorize', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'microsoftAuthorize']);
 $router->get('oauth/microsoft/callback', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'microsoftCallback']);
-$router->get('oauth/zoho/authorize', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'zohoAuthorize']);
-$router->get('oauth/zoho/callback', [\BooleanSmtp\Http\Controllers\OAuthController::class, 'zohoCallback']);
 
 // Email logs: browsing, viewing, resending, and deleting logged emails.
 $router->get('logs', [\BooleanSmtp\Http\Controllers\EmailLogController::class, 'index']);
@@ -67,14 +67,12 @@ $router->post('test-email', [\BooleanSmtp\Http\Controllers\TestEmailController::
 $router->get('settings', [\BooleanSmtp\Http\Controllers\SettingsController::class, 'index']);
 $router->put('settings', [\BooleanSmtp\Http\Controllers\SettingsController::class, 'update']);
 
-// Notifications: CRUD and test endpoints for delivery-failure alert channels.
+// Alerts: one setup per provider (Telegram, Slack, Discord), keyed by the provider type.
 $router->get('notifications', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'index']);
-$router->post('notifications', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'store']);
-$router->post('notifications/bulk', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'bulk']);
-$router->put('notifications/{id}', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'update']);
-$router->delete('notifications/{id}', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'destroy']);
-$router->post('notifications/test', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'test']);
 $router->post('notifications/telegram/detect-chats', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'detectTelegramChats']);
+$router->put('notifications/{type}', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'update']);
+$router->delete('notifications/{type}', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'destroy']);
+$router->post('notifications/{type}/test', [\BooleanSmtp\Http\Controllers\NotificationController::class, 'test']);
 
 // Tools: debug logs, the active-plugin list, and migration from other SMTP plugins.
 $router->get('tools/debug-logs', [\BooleanSmtp\Http\Controllers\ToolsController::class, 'debugLogs']);
@@ -82,4 +80,3 @@ $router->delete('tools/debug-logs', [\BooleanSmtp\Http\Controllers\ToolsControll
 $router->get('tools/plugins', [\BooleanSmtp\Http\Controllers\ToolsController::class, 'activePlugins']);
 $router->get('tools/migration/scan', [\BooleanSmtp\Http\Controllers\ToolsController::class, 'migrationScan']);
 $router->post('tools/migration/import', [\BooleanSmtp\Http\Controllers\ToolsController::class, 'migrationImport']);
-

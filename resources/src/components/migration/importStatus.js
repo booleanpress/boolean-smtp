@@ -1,6 +1,6 @@
 /**
  * How the assessment statuses of an imported connection are shown, shared by the wizard's
- * import steps and the Tools → Migration page.
+ * import steps and the Migration page.
  *
  * @since 1.0.0
  */

@@ -1,29 +1,22 @@
 import { useState, useEffect } from 'react';
-import api from '../services/api';
-import {
-    Edit2, Trash2, Play, Square, Send, Search, BookOpen,
-    Bell, CheckCircle2, ArrowRight
-} from 'lucide-react';
+import api, { fieldErrors } from '../services/api';
+import { Edit2, Trash2, Send, Search, BookOpen, Bell, CheckCircle2, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '../components/ui/input';
 import { Checkbox } from '../components/ui/checkbox';
 import { Switch } from '../components/ui/switch';
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Spinner } from '@/components/ui/spinner';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
     AlertDialog, AlertDialogAction, AlertDialogCancel,
     AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-    AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
+    AlertDialogHeader, AlertDialogTitle
 } from '../components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import NotificationsSkeleton from '../components/skeletons/NotificationsSkeleton';
 import { useTranslations } from '../hooks/useTranslations';
-import { useProCapability } from '@/hooks/useProCapability';
-import { TABLE_HEADER_CLASS } from '@/lib/table';
 import { alertDocsUrl } from '@/config/docs';
 // Bundled with the plugin: an admin page never loads images from a third-party host.
 import slackIcon from '../assets/alerts/slack-icon.svg';
@@ -34,7 +27,6 @@ const PROVIDER_ICONS = {
     slack: slackIcon,
     telegram: telegramIcon,
     discord: discordIcon,
-    webhook: '', // Fallback to Bell icon
 };
 
 const PROVIDER_SETUP_HINTS = {
@@ -53,7 +45,7 @@ const PROVIDER_SETUP_HINTS = {
     ],
 };
 
-const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest, testingForm = false, isEditing = false, saving = false }) => {
+const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest, testingForm = false, isEditing = false, saving = false, errors = {} }) => {
     const { t } = useTranslations();
     const selectedProvider = available[form.type];
     const providerName = selectedProvider?.name || form.type;
@@ -91,11 +83,11 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
                     <div className="space-y-1">
                         <h2 className="text-xl font-semibold tracking-tight">
                             {isEditing
-                                ? t('notifications.edit_connection_provider', 'Edit {{name}} Channel', { name: providerName })
-                                : t('notifications.register_channel_provider', 'Connect {{name}}', { name: providerName })}
+                                ? t('notifications.edit_provider', 'Edit {{name}} alerts', { name: providerName })
+                                : t('notifications.set_up_provider', 'Set up {{name}} alerts', { name: providerName })}
                         </h2>
                         <p className="text-sm text-muted-foreground">
-                            {t('notifications.editor_subtitle_provider', 'Configure your {{name}} connection to receive real-time delivery alerts.', { name: providerName })}
+                            {t('notifications.editor_subtitle', 'Alerts reach {{name}} when an email finally fails, a connection fails its health check, or a sign-in can no longer be refreshed.', { name: providerName })}
                         </p>
                     </div>
                 </div>
@@ -107,37 +99,17 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
                     <Button variant="ghost" onClick={onCancel}>{t('common.cancel', 'Cancel')}</Button>
                     <Button onClick={onSave} disabled={saving}>
                         {saving ? <Spinner /> : <CheckCircle2 />}
-                        {isEditing ? t('notifications.update_channel', 'Update Channel') : t('notifications.activate_channel', 'Activate Channel')}
+                        {t('common.save', 'Save')}
                     </Button>
                 </div>
             </div>
 
             <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
                 <div className="space-y-8 md:col-span-2">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>{t('notifications.general_information', 'General Information')}</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <FieldGroup>
-                                <Field>
-                                    <FieldLabel htmlFor="channel-name">{t('notifications.friendly_label', 'Friendly Label')}</FieldLabel>
-                                    <Input
-                                        id="channel-name"
-                                        placeholder={t('notifications.friendly_label_placeholder', 'e.g. Critical Alerts (Production)')}
-                                        value={form.name}
-                                        onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                                    />
-                                    <FieldDescription>{t('notifications.friendly_label_help', 'Internal name used to identify this connection in logs.')}</FieldDescription>
-                                </Field>
-                            </FieldGroup>
-                        </CardContent>
-                    </Card>
-
                     {form.type && selectedProvider?.schema && (
                         <Card>
                             <CardHeader>
-                                <CardTitle>{t('notifications.connection_payload', 'Connection Payload')}</CardTitle>
+                                <CardTitle>{t('notifications.provider_settings', 'Settings')}</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 <FieldGroup>
@@ -192,6 +164,7 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
                                                         </Button>
                                                     )}
                                                 </div>
+                                                {errors[key] && <FieldDescription className="text-destructive">{errors[key]}</FieldDescription>}
                                                 {isTelegramChatId && detectedChats !== null && (
                                                     detectedChats.length > 0 ? (
                                                         <div className="mt-2 space-y-1 rounded-md border p-2">
@@ -242,9 +215,9 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
                                     onCheckedChange={v => setForm(p => ({ ...p, is_active: v }))}
                                 />
                                 <FieldContent>
-                                    <FieldLabel htmlFor="channel-is-active">{t('notifications.live_channel', 'Live Channel')}</FieldLabel>
+                                    <FieldLabel htmlFor="channel-is-active">{t('notifications.send_alerts', 'Send alerts')}</FieldLabel>
                                     <FieldDescription>
-                                        {t('notifications.live_channel_help', 'Only active channels will receive real-time alerts. Ensure your API keys are correct before enabling.')}
+                                        {t('notifications.send_alerts_help', 'Turn off to keep these settings without sending alerts.')}
                                     </FieldDescription>
                                 </FieldContent>
                             </Field>
@@ -282,36 +255,31 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
     );
 };
 
+/**
+ * The Alerts screen: one row per provider (Telegram, Slack, Discord), each set up once.
+ *
+ * @since 1.0.0
+ */
 export default function Notifications() {
     const { t } = useTranslations();
-    const { hasFeature: hasAdvancedNotifications } = useProCapability('notifications.advanced');
-    const [channels, setChannels] = useState([]);
     const [available, setAvailable] = useState({});
+    const [channels, setChannels] = useState({});
     const [loading, setLoading] = useState(true);
-    const [editingId, setEditingId] = useState(null);
-    const [showNewForm, setShowNewForm] = useState(false);
-    const [selectedIds, setSelectedIds] = useState([]);
-    const [isBulkActing, setIsBulkActing] = useState(false);
+    const [editingType, setEditingType] = useState(null);
+    const [form, setForm] = useState({ type: '', settings: {}, is_active: true });
+    const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
-    const [testingId, setTestingId] = useState(null);
+    const [testingType, setTestingType] = useState(null);
     const [testingForm, setTestingForm] = useState(false);
-    const [pendingDisableChannel, setPendingDisableChannel] = useState(null);
-
-    const [form, setForm] = useState({
-        type: '',
-        name: '',
-        settings: {},
-        is_active: true
-    });
+    const [pendingDisconnect, setPendingDisconnect] = useState(null);
 
     useEffect(() => { loadData({ initial: true }); }, []);
 
     /**
-     * Load channels and the available channel catalogue.
+     * Load the providers and their setups.
      *
-     * Only the very first load (`initial: true`) may swap the page for the skeleton. Re-loads after a
-     * save, delete, toggle or bulk action keep the rendered list in place, so the screen does not
-     * "splash" back to the skeleton on every interaction.
+     * Only the very first load (`initial: true`) may swap the page for the skeleton; later reloads
+     * keep the rendered rows in place.
      *
      * @since 1.0.0
      * @param {{ initial?: boolean }} [options]
@@ -320,8 +288,8 @@ export default function Notifications() {
         if (initial) setLoading(true);
         try {
             const res = await api.get('notifications');
-            setChannels(res.data?.channels || []);
             setAvailable(res.data?.available || {});
+            setChannels(res.data?.channels || {});
         } catch (err) {
             console.error(err);
             toast.error(t('notifications.failed_load_settings', 'Failed to load notification settings'));
@@ -330,49 +298,36 @@ export default function Notifications() {
         }
     }
 
+    function startSetup(type) {
+        const saved = channels[type];
+        setForm({ type, settings: { ...(saved?.settings || {}) }, is_active: saved ? !!saved.is_active : true });
+        setErrors({});
+        setEditingType(type);
+    }
+
     async function handleSave() {
-        if (!form.name || !form.type) {
-            toast.error(t('notifications.validation_name_type', 'Please provide a name and channel type.'));
-            return;
-        }
         setSaving(true);
+        setErrors({});
         try {
-            if (editingId) {
-                await api.put(`notifications/${editingId}`, form);
-                toast.success(t('notifications.channel_updated', 'Notification channel updated.'));
-            } else {
-                await api.post('notifications', form);
-                toast.success(t('notifications.channel_added', 'Notification channel added.'));
-            }
-            setShowNewForm(false);
-            setEditingId(null);
+            await api.put(`notifications/${form.type}`, { settings: form.settings, is_active: form.is_active });
+            toast.success(t('notifications.saved', 'Alert settings saved.'));
+            setEditingType(null);
             loadData();
         } catch (err) {
-            toast.error(err.response?.data?.message || err.message);
+            setErrors(fieldErrors(err.errors));
+            toast.error(err.message);
         } finally {
             setSaving(false);
         }
     }
 
-    async function handleDelete(id) {
-        try {
-            await api.delete(`notifications/${id}`);
-            toast.success(t('notifications.channel_deleted', 'Channel deleted.'));
-            loadData();
-            setSelectedIds(prev => prev.filter(i => i !== id));
-        } catch (err) {
-            toast.error(t('notifications.delete_failed', 'Delete failed: {{message}}', { message: err.message }));
-        }
-    }
-
     async function sendTest(type, settings) {
         try {
-            const res = await api.post('notifications/test', { type, settings });
+            const res = await api.post(`notifications/${type}/test`, settings ? { settings } : {});
             const success = !!res.data?.success;
             // testChannel() returns a single 'error' string for a delivery failure, or an
-            // 'errors' object (field -> message) when validateSettings() rejects the form
-            // before ever attempting delivery -- both are real, more specific reasons than
-            // the generic top-level message and should win when present.
+            // 'errors' object (field -> message) when the provider rejects the settings
+            // before delivery is attempted -- both are more specific than the top-level message.
             const validationErrors = res.data?.errors && typeof res.data.errors === 'object'
                 ? Object.values(res.data.errors).join(' ')
                 : null;
@@ -389,10 +344,10 @@ export default function Notifications() {
         }
     }
 
-    async function handleSendTestForChannel(ch) {
-        setTestingId(ch.id);
-        await sendTest(ch.type, ch.settings);
-        setTestingId(null);
+    async function handleSendTestForRow(type) {
+        setTestingType(type);
+        await sendTest(type);
+        setTestingType(null);
     }
 
     async function handleSendTestForForm(type, settings) {
@@ -401,319 +356,141 @@ export default function Notifications() {
         setTestingForm(false);
     }
 
-    async function handleToggle(id, isActive) {
+    async function handleToggle(type, isActive) {
         try {
-            await api.put(`notifications/${id}`, { is_active: !isActive });
-            toast.success(t('notifications.channel_toggle', 'Channel {{state}}.', { state: isActive ? t('notifications.disabled', 'disabled') : t('notifications.enabled', 'enabled') }));
+            await api.put(`notifications/${type}`, { is_active: !isActive });
+            toast.success(isActive
+                ? t('notifications.alerts_paused', 'Alerts paused.')
+                : t('notifications.alerts_resumed', 'Alerts turned on.'));
             loadData();
         } catch (err) {
             toast.error(t('notifications.update_failed', 'Update failed: {{message}}', { message: err.message }));
         }
     }
 
-    function confirmDisable() {
-        if (pendingDisableChannel) {
-            handleToggle(pendingDisableChannel.id, pendingDisableChannel.is_active);
-        }
-        setPendingDisableChannel(null);
-    }
-
-    async function handleBulkAction(action) {
-        if (selectedIds.length === 0) return;
-        setIsBulkActing(true);
+    async function handleDisconnect(type) {
         try {
-            await api.post('notifications/bulk', { ids: selectedIds, action });
-            toast.success(t('notifications.bulk_action_completed', 'Bulk {{action}} completed.', { action }));
-            setSelectedIds([]);
+            await api.delete(`notifications/${type}`);
+            toast.success(t('notifications.disconnected', 'Disconnected.'));
             loadData();
         } catch (err) {
-            toast.error(t('notifications.bulk_action_failed', 'Bulk action failed: {{message}}', { message: err.message }));
-        } finally {
-            setIsBulkActing(false);
+            toast.error(t('notifications.delete_failed', 'Delete failed: {{message}}', { message: err.message }));
         }
     }
-
-    function startEdit(ch) {
-        setForm({
-            type: ch.type,
-            name: ch.name,
-            settings: ch.settings || {},
-            is_active: ch.is_active,
-        });
-        setEditingId(ch.id);
-        setShowNewForm(false);
-    }
-
-    const toggleSelectAll = () => {
-        if (selectedIds.length === channels.length) {
-            setSelectedIds([]);
-        } else {
-            setSelectedIds(channels.map(c => c.id));
-        }
-    };
-
-    const toggleSelectOne = (id) => {
-        setSelectedIds(prev =>
-            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-        );
-    };
 
     if (loading) {
         return <NotificationsSkeleton />;
     }
 
-    if (showNewForm || editingId) {
+    if (editingType) {
         return (
             <ChannelEditor
-                isEditing={!!editingId}
+                isEditing={!!channels[editingType]}
                 form={form}
                 setForm={setForm}
                 available={available}
                 onSave={handleSave}
                 saving={saving}
+                errors={errors}
                 onSendTest={handleSendTestForForm}
                 testingForm={testingForm}
-                onCancel={() => { setShowNewForm(false); setEditingId(null); }}
+                onCancel={() => setEditingType(null)}
             />
         );
     }
 
-    const allSelected = channels.length > 0 && selectedIds.length === channels.length;
-    const channelCountByType = channels.reduce((counts, ch) => ({ ...counts, [ch.type]: (counts[ch.type] || 0) + 1 }), {});
-    const allProviderEntries = Object.entries(available);
-    // Free-plan provider cards disappear after that provider has one channel,
-    // rather than being shown disabled with a lock/Pro badge
-    // (avoids WP.org-style paywall-teaser patterns on what looks like a real, clickable control).
-    const providersToShow = hasAdvancedNotifications
-        ? allProviderEntries
-        : allProviderEntries.filter(([type]) => (channelCountByType[type] || 0) < 1);
-
     return (
-        <div className="mx-auto max-w-7xl space-y-8">
+        <div className="mx-auto max-w-4xl space-y-8">
             <div className="space-y-1">
                 <h1 className="text-xl font-semibold tracking-tight">
-                    {t('notifications.page_title', 'Notification Alerts')}
+                    {t('notifications.page_title', 'Alerts')}
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    {t('notifications.page_subtitle', 'Securely pipeline critical delivery events to your preferred operations stack.')}
+                    {t('notifications.page_subtitle', 'Get a message in Telegram, Slack or Discord when an email finally fails, a connection fails its health check, or a sign-in can no longer be refreshed. Set up any or all of them.')}
                 </p>
             </div>
 
-            {/* Providers Selection */}
-            <section className="space-y-4">
-                <h2 className="text-base font-semibold">
-                    {t('notifications.available_providers', 'Available Providers')}
-                </h2>
-
-                {providersToShow.length > 0 && (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        {providersToShow.map(([type, info]) => (
-                            <Button
-                                key={type}
-                                variant="outline"
-                                onClick={() => {
-                                    setForm({ type, name: '', settings: {}, is_active: true });
-                                    setShowNewForm(true);
-                                    setEditingId(null);
-                                }}
-                                className="group h-auto flex-col items-start justify-start gap-4 rounded-xl border bg-card p-6 text-left whitespace-normal shadow-none transition-colors hover:border-primary/40 hover:bg-card dark:border-border dark:bg-card dark:hover:bg-card"
-                            >
-                                <span className="flex size-12 items-center justify-center rounded-lg border bg-muted">
-                                    {PROVIDER_ICONS[type] ? (
-                                        <img src={PROVIDER_ICONS[type]} className="size-6 object-contain" alt="" aria-hidden="true" />
-                                    ) : (
-                                        <Bell className="size-6 text-muted-foreground" aria-hidden="true" />
-                                    )}
-                                </span>
-
-                                <span className="block space-y-1">
-                                    <span className="block text-sm font-medium">{info.name}</span>
-                                    <span className="line-clamp-2 block text-xs font-normal text-muted-foreground">
-                                        {t('notifications.provider_connect_description', 'Connect your {{name}} workspace for real-time delivery alerts.', { name: info.name })}
-                                    </span>
-                                </span>
-
-                                <span className="mt-auto flex w-full items-center justify-between text-xs font-medium text-primary">
-                                    {t('notifications.setup_connect', 'Setup Connect')}
-                                    <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                                </span>
-                            </Button>
-                        ))}
-                    </div>
-                )}
-
-            </section>
-
-            {/* Connected Channels */}
-            {channels.length > 0 && (
-                <section className="space-y-4">
-                    <h2 className="text-base font-semibold">
-                        {t('notifications.connected_channels', 'Connected Channels')}
-                    </h2>
-                    <div className="overflow-hidden rounded-lg border bg-card">
-                        {selectedIds.length > 0 && (
-                            <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-primary/5 p-3">
-                                <span className="text-sm font-medium text-primary">
-                                    {t('notifications.channels_selected', '{{count}} Channel{{suffix}} Selected', { count: selectedIds.length, suffix: selectedIds.length > 1 ? 's' : '' })}
-                                </span>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <Button variant="outline" size="sm" onClick={() => handleBulkAction('enable')} disabled={isBulkActing}>
-                                        <Play /> {t('notifications.enable', 'Enable')}
-                                    </Button>
-                                    <Button variant="outline" size="sm" onClick={() => handleBulkAction('disable')} disabled={isBulkActing}>
-                                        <Square /> {t('notifications.disable', 'Disable')}
-                                    </Button>
-                                    <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                            <Button variant="outline" size="sm" className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={isBulkActing}>
-                                                <Trash2 /> {t('common.delete', 'Delete')}
-                                            </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                                <AlertDialogTitle>{t('notifications.bulk_remove_title', 'Bulk Remove {{count}} Channels?', { count: selectedIds.length })}</AlertDialogTitle>
-                                                <AlertDialogDescription>{t('notifications.bulk_remove_description', 'Are you sure you want to permanently delete the selected alert channels? This cannot be undone.')}</AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                                <AlertDialogCancel>{t('common.cancel', 'Cancel')}</AlertDialogCancel>
-                                                <AlertDialogAction variant="destructive" onClick={() => handleBulkAction('delete')}>{t('notifications.delete_forever', 'Delete Forever')}</AlertDialogAction>
-                                            </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                    </AlertDialog>
-                                </div>
+            <ul className="divide-y overflow-hidden rounded-lg border bg-card" aria-label={t('notifications.providers_label', 'Alert providers')}>
+                {Object.entries(available).map(([type, info]) => {
+                    const setup = channels[type];
+                    return (
+                        <li key={type} className="flex flex-wrap items-center gap-4 p-4">
+                            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
+                                {PROVIDER_ICONS[type] ? (
+                                    <img src={PROVIDER_ICONS[type]} className="size-5 object-contain" alt="" aria-hidden="true" />
+                                ) : (
+                                    <Bell className="size-5 text-muted-foreground" aria-hidden="true" />
+                                )}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                                <p className="font-medium text-foreground">{info.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {!setup
+                                        ? t('notifications.not_connected', 'Not connected')
+                                        : setup.is_active
+                                            ? t('notifications.connected', 'Connected')
+                                            : t('notifications.paused', 'Connected, alerts paused')}
+                                </p>
                             </div>
-                        )}
-                        <Table aria-label={t('notifications.table_label', 'Notification channels')}>
-                            <TableHeader className={TABLE_HEADER_CLASS}>
-                                <TableRow>
-                                    <TableHead className="w-10 px-4">
-                                        <Checkbox
-                                            checked={allSelected}
-                                            onCheckedChange={toggleSelectAll}
-                                            aria-label={t('notifications.select_all', 'Select all channels')}
-                                        />
-                                    </TableHead>
-                                    <TableHead className="px-4 text-muted-foreground">{t('notifications.channel', 'Channel')}</TableHead>
-                                    <TableHead className="w-52 px-4 text-right text-muted-foreground">{t('common.actions', 'Actions')}</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {channels.map(ch => {
-                                    const isSelected = selectedIds.includes(ch.id);
-                                    return (
-                                        <TableRow key={ch.id} data-state={isSelected ? 'selected' : undefined}>
-                                            <TableCell className="px-4 py-1.5">
-                                                <Checkbox
-                                                    checked={isSelected}
-                                                    onCheckedChange={() => toggleSelectOne(ch.id)}
-                                                    aria-label={t('notifications.select_channel', 'Select {{name}}', { name: ch.name })}
-                                                />
-                                            </TableCell>
-                                            <TableCell className="px-4 py-1.5">
-                                                <div className="flex items-center gap-3">
-                                                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted">
-                                                        {PROVIDER_ICONS[ch.type] ? (
-                                                            <img src={PROVIDER_ICONS[ch.type]} className="size-4 object-contain" alt="" aria-hidden="true" />
-                                                        ) : (
-                                                            <Bell className="size-4 text-muted-foreground" aria-hidden="true" />
-                                                        )}
-                                                    </span>
-                                                    <div className="min-w-0">
-                                                        <p className="truncate font-medium text-foreground">{ch.name}</p>
-                                                        <p className="text-xs text-muted-foreground">#{ch.id}</p>
-                                                    </div>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="px-4 py-1.5">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <Switch
-                                                        checked={ch.is_active}
-                                                        onCheckedChange={(checked) => {
-                                                            if (ch.is_active && !checked) {
-                                                                setPendingDisableChannel(ch);
-                                                            } else {
-                                                                handleToggle(ch.id, ch.is_active);
-                                                            }
-                                                        }}
-                                                        aria-label={t('notifications.toggle_channel', 'Enable or disable {{name}}', { name: ch.name })}
-                                                        title={ch.is_active ? t('notifications.connected', 'Connected') : t('notifications.not_connected', 'Not connected')}
-                                                    />
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon-sm"
-                                                        onClick={() => handleSendTestForChannel(ch)}
-                                                        disabled={testingId === ch.id}
-                                                        aria-label={t('notifications.send_test_channel', 'Send test message to {{name}}', { name: ch.name })}
-                                                        title={t('notifications.send_test_short', 'Send Test')}
-                                                    >
-                                                        {testingId === ch.id ? <Spinner /> : <Send />}
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon-sm"
-                                                        onClick={() => startEdit(ch)}
-                                                        aria-label={t('notifications.edit_channel', 'Edit {{name}}', { name: ch.name })}
-                                                        title={t('notifications.edit_connection', 'Edit Connection')}
-                                                    >
-                                                        <Edit2 />
-                                                    </Button>
-                                                    <AlertDialog>
-                                                        <AlertDialogTrigger asChild>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon-sm"
-                                                                aria-label={t('notifications.delete_channel', 'Delete {{name}}', { name: ch.name })}
-                                                                title={t('common.delete', 'Delete')}
-                                                            >
-                                                                <Trash2 />
-                                                            </Button>
-                                                        </AlertDialogTrigger>
-                                                        <AlertDialogContent>
-                                                            <AlertDialogHeader>
-                                                                <AlertDialogTitle>{t('notifications.delete_channel_title', 'Delete Channel?')}</AlertDialogTitle>
-                                                                <AlertDialogDescription>{t('notifications.delete_channel_description', 'Permanently remove the alert channel "{{name}}"? This cannot be undone.', { name: ch.name })}</AlertDialogDescription>
-                                                            </AlertDialogHeader>
-                                                            <AlertDialogFooter>
-                                                                <AlertDialogCancel>{t('common.cancel', 'Cancel')}</AlertDialogCancel>
-                                                                <AlertDialogAction variant="destructive" onClick={() => handleDelete(ch.id)}>{t('notifications.yes_delete', 'Yes, Delete')}</AlertDialogAction>
-                                                            </AlertDialogFooter>
-                                                        </AlertDialogContent>
-                                                    </AlertDialog>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    );
-                                })}
-                            </TableBody>
-                        </Table>
-                    </div>
+                            {setup ? (
+                                <div className="flex items-center gap-2">
+                                    <Switch
+                                        checked={!!setup.is_active}
+                                        onCheckedChange={() => handleToggle(type, !!setup.is_active)}
+                                        aria-label={t('notifications.toggle_provider', 'Send {{name}} alerts', { name: info.name })}
+                                    />
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        onClick={() => handleSendTestForRow(type)}
+                                        disabled={testingType === type}
+                                        aria-label={t('notifications.send_test_provider', 'Send a test alert to {{name}}', { name: info.name })}
+                                        title={t('notifications.send_test_short', 'Send Test')}
+                                    >
+                                        {testingType === type ? <Spinner /> : <Send />}
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => startSetup(type)}>
+                                        <Edit2 /> {t('common.edit', 'Edit')}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        onClick={() => setPendingDisconnect({ type, name: info.name })}
+                                        aria-label={t('notifications.disconnect_provider', 'Disconnect {{name}}', { name: info.name })}
+                                        title={t('notifications.disconnect', 'Disconnect')}
+                                    >
+                                        <Trash2 />
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Button onClick={() => startSetup(type)}>
+                                    {t('notifications.set_up', 'Set up')} <ArrowRight />
+                                </Button>
+                            )}
+                        </li>
+                    );
+                })}
+            </ul>
 
-                    <AlertDialog open={!!pendingDisableChannel} onOpenChange={open => { if (!open) setPendingDisableChannel(null); }}>
-                        <AlertDialogContent>
-                            <AlertDialogHeader>
-                                <AlertDialogTitle>{t('notifications.disconnect_channel_title', 'Disconnect Channel?')}</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                    {t('notifications.disconnect_channel_confirm', 'Stop sending alerts through "{{name}}"? You can turn it back on anytime.', { name: pendingDisableChannel?.name || '' })}
-                                </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                                <AlertDialogCancel>{t('common.cancel', 'Cancel')}</AlertDialogCancel>
-                                <AlertDialogAction onClick={confirmDisable}>{t('notifications.yes_disconnect', 'Yes, Disconnect')}</AlertDialogAction>
-                            </AlertDialogFooter>
-                        </AlertDialogContent>
-                    </AlertDialog>
-                </section>
-            )}
-
-            {channels.length === 0 && (
-                <Empty className="border bg-card">
-                    <EmptyHeader>
-                        <EmptyMedia variant="icon"><Bell className="text-primary" aria-hidden="true" /></EmptyMedia>
-                        <EmptyTitle>{t('notifications.empty_title', 'Build Your Sentry Stack')}</EmptyTitle>
-                        <EmptyDescription>{t('notifications.empty_description', 'Configure deep-linking alerts for Slack, Discord, or Telegram. Never miss a critical delivery failure again.')}</EmptyDescription>
-                    </EmptyHeader>
-                </Empty>
-            )}
+            <AlertDialog open={!!pendingDisconnect} onOpenChange={open => { if (!open) setPendingDisconnect(null); }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t('notifications.disconnect_title', 'Disconnect {{name}}?', { name: pendingDisconnect?.name || '' })}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('notifications.disconnect_description', 'Its settings are removed and alerts stop. You can set it up again at any time.')}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>{t('common.cancel', 'Cancel')}</AlertDialogCancel>
+                        <AlertDialogAction
+                            variant="destructive"
+                            onClick={() => { handleDisconnect(pendingDisconnect.type); setPendingDisconnect(null); }}
+                        >
+                            {t('notifications.disconnect', 'Disconnect')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

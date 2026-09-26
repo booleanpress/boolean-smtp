@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { NavLink, useLocation } from 'react-router';
+import { NavLink, matchPath, useLocation } from 'react-router';
 import { useTheme } from '@/components/theme-provider';
 import { HelpCircle, Settings, Sun, Moon, Plug, Send } from 'lucide-react';
 
@@ -11,8 +11,9 @@ import { AppSidebar } from './app-sidebar';
 import { useTranslations } from '@/hooks/useTranslations';
 import MailTakeoverWarning from './MailTakeoverWarning';
 import { usePageHeading } from '@/hooks/usePageHeading';
+import { useExtensions } from '@/hooks/useExtensions';
 
-const getPageTitle = (pathname, t) => {
+const getPageTitle = (pathname, t, extensionRoutes) => {
     if (pathname === '/') return t('layout.page_overview', 'Overview');
     if (pathname === '/about') return t('layout.page_about', 'About BooleanSMTP');
     if (pathname.startsWith('/connections/new')) return t('layout.page_new_connection', 'New Connection');
@@ -21,14 +22,18 @@ const getPageTitle = (pathname, t) => {
     if (pathname.startsWith('/logs/') && pathname !== '/logs') return t('layout.page_log_details', 'Email Log Details');
     if (pathname.startsWith('/logs')) return t('layout.page_logs', 'Email Logs');
     if (pathname.startsWith('/tools/test')) return t('layout.page_test_email', 'Email Deliverability Test');
-    if (pathname.startsWith('/tools/domain')) return t('layout.page_domain_auth', 'Domain Authentication');
-    if (pathname.startsWith('/tools/import')) return t('layout.page_import_export', 'Import/Export');
     if (pathname.startsWith('/tools/migration')) return t('layout.page_migration', 'Migration');
     if (pathname === '/settings') return t('layout.page_settings', 'Settings');
     if (pathname === '/settings/notifications') return t('layout.page_alerts_notifications', 'Alerts & Notifications');
     if (pathname === '/onboard' || pathname === '/setup') return t('layout.page_onboarding', 'Onboarding');
-    if (pathname.startsWith('/analytics')) return t('layout.page_analytics', 'Analytics');
-    if (pathname.startsWith('/routing')) return t('layout.page_routing', 'Routing');
+
+    // A page another plugin registers is titled by its menu entry.
+    const extensionRoute = extensionRoutes.find(route => typeof route?.path === 'string'
+        && matchPath({ path: `/${route.path.replace(/^\/+/, '')}`, end: false }, pathname));
+    if (extensionRoute?.nav?.label) {
+        return extensionRoute.nav.labelKey ? t(extensionRoute.nav.labelKey, extensionRoute.nav.label) : String(extensionRoute.nav.label);
+    }
+
     return t('layout.page_not_found', 'Page not found');
 };
 
@@ -75,7 +80,8 @@ function HeaderNavLink({ to, label, children }) {
 export default function Layout({ children }) {
     const { t } = useTranslations();
     const location = useLocation();
-    const pageTitle = useMemo(() => getPageTitle(location.pathname, t), [location.pathname, t]);
+    const { routes: extensionRoutes } = useExtensions();
+    const pageTitle = useMemo(() => getPageTitle(location.pathname, t, extensionRoutes), [location.pathname, t, extensionRoutes]);
     const { contentRef, headerHeadingRef, pageHasHeading } = usePageHeading(location.pathname);
     // The header's title is the screen's heading only when the screen has none of its own.
     const HeaderTitle = pageHasHeading ? 'p' : 'h1';

@@ -18,9 +18,8 @@ use BooleanSmtp\Support\Logging\LogChannels;
 
 /**
  * Feeds the plugin's public log switches (`boolean_smtp_log_file_enabled`, `boolean_smtp_log_file_level`,
- * `boolean_smtp_log_file_retention_days`, the `BOOLEAN_SMTP_DEBUG_*` constants and
- * `BOOLEAN_SMTP_DEBUG_LOG_DIR`) into the framework's `booleanpress_log_*` filters for this
- * plugin's slug only. Registered first, so every later provider's log calls see them.
+ * `boolean_smtp_log_file_retention_days`) and its log directory into the framework's
+ * `booleanpress_log_*` filters for this plugin's slug only. Registered first, so every later provider's log calls see them.
  *
  * @since 1.0.0
  */

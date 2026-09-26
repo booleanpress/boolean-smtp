@@ -18,8 +18,7 @@ use BooleanSmtp\Core\Contracts\LoggerContract;
  *
  * Every line is prefixed `[boolean-smtp] LEVEL:` so site owners can filter the debug log. `debug`
  * lines are written only while `WP_DEBUG` is on; every other level is always written. This class
- * and the diagnostic {@see \BooleanSmtp\Support\Debug\WordPressDebugLogger} are the only places in the
- * plugin that call `error_log()` directly.
+ * is the only place in the plugin that calls `error_log()` directly.
  *
  * @since 1.0.0
  */

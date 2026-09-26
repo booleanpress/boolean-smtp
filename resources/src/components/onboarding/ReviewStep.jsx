@@ -80,7 +80,7 @@ export default function ReviewStep({
         ? { variant: 'success', label: t('onboarding.verify_accepted', 'Accepted') }
         : test.status === 'failed'
             ? { variant: 'destructive', label: t('onboarding.verify_failed', 'Failed') }
-            : { variant: 'warning', label: t('onboarding.review_test_not_sent', 'Test not sent') };
+            : { variant: 'outline', label: t('onboarding.review_test_not_sent', 'Not tested yet') };
 
     const willPrimary = review.makePrimary || !hasOtherActive;
     const changes = [
@@ -97,7 +97,7 @@ export default function ReviewStep({
         <StepShell
             {...shell}
             title={t('onboarding.review_title', 'Apply this setup?')}
-            description={t('onboarding.review_desc', 'Check the summary, choose the preferences that go with it, then apply. Until then nothing has changed.')}
+            description={t('onboarding.review_desc', 'Check the summary and preferences, then activate the saved draft. A delivery test is optional.')}
             onBack={onBack}
             onContinue={onApply}
             continueLabel={t('onboarding.review_apply', 'Apply and finish')}

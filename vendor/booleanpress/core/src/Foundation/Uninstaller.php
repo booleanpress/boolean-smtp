@@ -49,7 +49,7 @@ class Uninstaller
             $result = $this->driver->statement("DROP TABLE IF EXISTS `{$tableName}`");
 
             if ($result === false) {
-                error_log("BooleanPress Uninstaller Error: Failed to drop table {$tableName}. Error: " . $this->driver->lastError());
+                $this->reportFailure("BooleanPress Uninstaller Error: Failed to drop table {$tableName}. Error: " . $this->driver->lastError());
             }
         }
     }
@@ -68,7 +68,7 @@ class Uninstaller
 
         if ($result === false) {
             $tableName = $this->driver->getTable($table);
-            error_log("BooleanPress Uninstaller Error: Failed to clear shared data from {$tableName}. Error: " . $this->driver->lastError());
+            $this->reportFailure("BooleanPress Uninstaller Error: Failed to clear shared data from {$tableName}. Error: " . $this->driver->lastError());
         }
     }
 
@@ -80,7 +80,7 @@ class Uninstaller
         $result = $this->driver->delete('booleanpress_migrations', ['plugin' => $pluginSlug]);
 
         if ($result === false) {
-            error_log("BooleanPress Uninstaller Error: Failed to remove migrations for {$pluginSlug}. Error: " . $this->driver->lastError());
+            $this->reportFailure("BooleanPress Uninstaller Error: Failed to remove migrations for {$pluginSlug}. Error: " . $this->driver->lastError());
         }
     }
 
@@ -94,7 +94,7 @@ class Uninstaller
         $result = $this->driver->delete('booleanpress_options', ['plugin' => $pluginSlug]);
 
         if ($result === false) {
-            error_log("BooleanPress Uninstaller Error: Failed to clear options for {$pluginSlug}. Error: " . $this->driver->lastError());
+            $this->reportFailure("BooleanPress Uninstaller Error: Failed to clear options for {$pluginSlug}. Error: " . $this->driver->lastError());
         }
     }
 
@@ -113,7 +113,7 @@ class Uninstaller
             ]);
 
             if ($result === false) {
-                error_log("BooleanPress Uninstaller Error: Failed to delete option '{$key}' for {$pluginSlug}. Error: " . $this->driver->lastError());
+                $this->reportFailure("BooleanPress Uninstaller Error: Failed to delete option '{$key}' for {$pluginSlug}. Error: " . $this->driver->lastError());
             }
         }
     }
@@ -146,7 +146,7 @@ class Uninstaller
             );
 
             if ($result === false) {
-                error_log("BooleanPress Uninstaller Error: Failed to delete options matching {$namespace}{$prefix}*. Error: " . $this->driver->lastError());
+                $this->reportFailure("BooleanPress Uninstaller Error: Failed to delete options matching {$namespace}{$prefix}*. Error: " . $this->driver->lastError());
             }
         }
     }
@@ -201,6 +201,19 @@ class Uninstaller
         // Clear jobs (only plugins using the queue component create this table)
         if ($this->driver->tableExists('booleanpress_jobs')) {
             $this->clearSharedData('booleanpress_jobs', $pluginSlug);
+        }
+    }
+
+    /**
+     * Record a step that failed. Uninstalling runs without the plugin booted, so there is no log
+     * channel; the message goes to PHP's error log, and only while `WP_DEBUG` is on.
+     *
+     * @since 0.2.11
+     */
+    protected function reportFailure(string $message): void
+    {
+        if (\defined('WP_DEBUG') && WP_DEBUG) {
+            error_log($message); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- uninstall runs without the plugin booted; PHP's log is the only place left, and only while debugging.
         }
     }
 

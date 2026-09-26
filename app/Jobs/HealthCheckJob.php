@@ -12,7 +12,7 @@ namespace BooleanSmtp\Jobs;
 
 use BooleanSmtp\Adapters\Contracts\ScheduleAdapterContract;
 use BooleanSmtp\Contracts\EncryptorContract;
-use BooleanSmtp\Contracts\Editions\HealthAlertContract;
+use BooleanSmtp\Services\Notification\Alerts\ConnectionFailureAlert;
 use BooleanSmtp\Core\Foundation\Application;
 use BooleanSmtp\Models\Connection;
 use BooleanSmtp\Core\Contracts\LoggerContract;
@@ -114,9 +114,9 @@ class HealthCheckJob {
     /**
      * Probe every active connection and record its health status.
      *
-     * For each unhealthy connection, sends the alert the site's health-alert policy
-     * ({@see HealthAlertContract}) chooses. Alert delivery failures are swallowed so they
-     * cannot break the health check run.
+     * For each unhealthy connection, sends a connection-failure alert unless the
+     * `boolean_smtp_should_send_health_alert` filter says otherwise. Alert delivery failures are
+     * swallowed so they cannot break the health check run.
      *
      * @since 1.0.0
      */
@@ -156,7 +156,27 @@ class HealthCheckJob {
                     'driver'          => $connection->driver,
                 ];
 
-                $this->app->make(HealthAlertContract::class)->unhealthy($alertData);
+                /**
+                 * Filters whether a failed health check sends a connection-failure alert.
+                 *
+                 * Return false to send no alert for this check, for instance when your own code
+                 * alerts on connections that stay down instead (see `boolean_smtp_health_check_result`).
+                 *
+                 * @since 1.0.0
+                 *
+                 * @param bool                 $send      Whether to send the alert. Default true.
+                 * @param array<string, mixed> $alertData {
+                 *     The failed connection.
+                 *
+                 *     @type int    $connection_id   Connection id.
+                 *     @type string $connection_name Connection name.
+                 *     @type string $driver          Connection driver key.
+                 * }
+                 * @return bool Whether to send the alert.
+                 */
+                if ((bool) \apply_filters('boolean_smtp_should_send_health_alert', true, $alertData)) {
+                    $this->app->make(ConnectionFailureAlert::class)->trigger($alertData);
+                }
             } catch (\Throwable $e) {
                 // Alert delivery failure must not break the health check run.
                 $this->logger->warning('Connection health alert could not be sent.', [

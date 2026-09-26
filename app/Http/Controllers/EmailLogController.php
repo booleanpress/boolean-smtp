@@ -23,7 +23,7 @@ use BooleanSmtp\Repositories\EmailLogRepository;
 use BooleanSmtp\Support\Settings;
 use BooleanSmtp\Services\Mailer\MailerManager;
 use BooleanSmtp\Services\Mailer\SupervisedSend;
-use BooleanSmtp\Support\Debug\WordPressDebugLogger;
+use BooleanSmtp\Support\Debug\ApiDebugResponse;
 
 /**
  * Backs the Email Logs screen: listing, viewing, resending, and deleting log entries.
@@ -57,7 +57,7 @@ class EmailLogController extends Controller {
      *
      * Reads `per_page`, `page`, `status`, `provider`, `search`, `date_from`, and `date_to` from
      * the query string. Raw provider error details are replaced with a generic message unless
-     * the developer API-debug filter is enabled (see {@see WordPressDebugLogger::canExposeApiDebugResponse()}).
+     * the developer API-debug filter is enabled (see {@see ApiDebugResponse::enabled()}).
      *
      * @since 1.0.0
      *
@@ -77,7 +77,7 @@ class EmailLogController extends Controller {
         ];
 
         $result = $this->logs->paginate($perPage, $page, $filters);
-        $includeRawApiDiagnostics = WordPressDebugLogger::canExposeApiDebugResponse();
+        $includeRawApiDiagnostics = ApiDebugResponse::enabled();
         if (!$includeRawApiDiagnostics && isset($result['data']) && \is_array($result['data'])) {
             $result['data'] = array_map(function (mixed $row): array {
                 $data = $row instanceof EmailLog ? $row->toArray() : (array) $row;
@@ -107,7 +107,7 @@ class EmailLogController extends Controller {
         $data                = $log->toArray();
         $data['body']        = $log->body;
         $data['attachments'] = $log->attachments ?: [];
-        if (!WordPressDebugLogger::canExposeApiDebugResponse()) {
+        if (!ApiDebugResponse::enabled()) {
             $data = self::sanitizeBrowserLogData($data);
         }
 
@@ -206,13 +206,12 @@ class EmailLogController extends Controller {
         $mailer = $this->make(MailerManager::class);
 
         // Body is missing only for older logs predating body logging, simulated
-        // sends, or a site whose message-body policy does not store bodies.
+        // sends, or a site that keeps bodies out of the log.
         $body = $log->body;
         if (empty($body)) {
             if (!$mailer->isBodyLoggingAllowed()) {
                 return $this->error(
-                    'Resend failed: Email body storage is turned off in Settings. '
-                    . 'Enable "Store Email Message Body" to allow resending.',
+                    'Resend failed: this site does not store message bodies, so there is nothing to resend.',
                     422
                 );
             }
@@ -302,7 +301,7 @@ class EmailLogController extends Controller {
 
         if ($sent) {
             $data = $log->toArray();
-            if (!WordPressDebugLogger::canExposeApiDebugResponse()) {
+            if (!ApiDebugResponse::enabled()) {
                 $data = self::sanitizeBrowserLogData($data);
             }
 
@@ -312,7 +311,7 @@ class EmailLogController extends Controller {
         // The 3rd arg to error() lands in the response's `errors` key (meant for small
         // validation-error dicts, e.g. ['field' => 'message']) — passing the full model
         // here previously made the frontend dump the entire log row into the error text.
-        $browserError = WordPressDebugLogger::canExposeApiDebugResponse()
+        $browserError = ApiDebugResponse::enabled()
             ? ($errorMessage ?: 'Unknown error')
             : self::safeDeliveryError();
 
