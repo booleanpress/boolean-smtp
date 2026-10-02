@@ -295,6 +295,7 @@ return array(
     'BooleanSmtp\\Support\\Logging\\LogChannels' => $baseDir . '/app/Support/Logging/LogChannels.php',
     'BooleanSmtp\\Support\\Logging\\PluginLogger' => $baseDir . '/app/Support/Logging/PluginLogger.php',
     'BooleanSmtp\\Support\\ReportPeriod' => $baseDir . '/app/Support/ReportPeriod.php',
+    'BooleanSmtp\\Support\\SecretMask' => $baseDir . '/app/Support/SecretMask.php',
     'BooleanSmtp\\Support\\Settings' => $baseDir . '/app/Support/Settings.php',
     'BooleanSmtp\\Support\\UninstallPolicy' => $baseDir . '/app/Support/UninstallPolicy.php',
     'BooleanSmtp\\Support\\WordPressMailerLoader' => $baseDir . '/app/Support/WordPressMailerLoader.php',

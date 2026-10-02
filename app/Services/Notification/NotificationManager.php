@@ -14,6 +14,7 @@ namespace BooleanSmtp\Services\Notification;
 use BooleanSmtp\Contracts\NotificationChannelContract;
 use BooleanSmtp\Models\NotificationChannel;
 use BooleanSmtp\Repositories\NotificationChannelRepository;
+use BooleanSmtp\Support\SecretMask;
 use BooleanSmtp\Core\Contracts\LoggerContract;
 use BooleanSmtp\Core\Foundation\Application;
 use function BooleanSmtp\Core\app;
@@ -213,6 +214,9 @@ class NotificationManager {
     /**
      * Validation errors for a provider's settings, keyed by setting name.
      *
+     * A secret still hidden after {@see self::restoreSecrets()} had no saved value to keep, so it
+     * is refused rather than stored as asterisks.
+     *
      * @since 1.0.0
      *
      * @param  string               $type     Provider type.
@@ -221,8 +225,88 @@ class NotificationManager {
      */
     public function validateSettings(string $type, array $settings): array {
         $driver = $this->resolveDriver($type);
+        if ($driver === null) {
+            return [];
+        }
 
-        return $driver === null ? [] : $driver->validateSettings($settings);
+        $errors = $driver->validateSettings($settings);
+        foreach ($this->secretFields($type) as $key) {
+            $value = isset($settings[$key]) && \is_string($settings[$key]) ? \trim($settings[$key]) : '';
+            if (!isset($errors[$key]) && SecretMask::isMasked($value)) {
+                $errors[$key] = 'Paste the full value: there is no saved one to keep.';
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * The names of a provider's secret settings: the fields its schema marks `secret` or declares
+     * as a password.
+     *
+     * @since 1.0.0
+     *
+     * @param  string $type Provider type.
+     * @return list<string> Empty for an unknown provider.
+     */
+    public function secretFields(string $type): array {
+        $driver = $this->resolveDriver($type);
+        if ($driver === null) {
+            return [];
+        }
+
+        $fields = [];
+        foreach ($driver->getSettingsSchema() as $key => $field) {
+            if (\is_array($field) && (($field['secret'] ?? false) === true || ($field['type'] ?? '') === 'password')) {
+                $fields[] = (string) $key;
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * A provider's settings as the admin screen receives them: each secret shows only its last
+     * four characters.
+     *
+     * @since 1.0.0
+     *
+     * @param  string               $type     Provider type.
+     * @param  array<string, mixed> $settings Saved settings, decrypted.
+     * @return array<string, mixed>
+     */
+    public function maskSettings(string $type, array $settings): array {
+        foreach ($this->secretFields($type) as $key) {
+            if (isset($settings[$key]) && \is_string($settings[$key])) {
+                $settings[$key] = SecretMask::mask($settings[$key]);
+            }
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Settings sent from the admin screen, with each secret that came back as shown (asterisks and
+     * its last four characters) replaced by the saved value, so an unchanged secret is kept.
+     *
+     * @since 1.0.0
+     *
+     * @param  string               $type     Provider type.
+     * @param  array<string, mixed> $incoming Settings from the request.
+     * @param  array<string, mixed> $saved    Saved settings, decrypted; empty when none are saved.
+     * @return array<string, mixed>
+     */
+    public function restoreSecrets(string $type, array $incoming, array $saved): array {
+        foreach ($this->secretFields($type) as $key) {
+            $value  = isset($incoming[$key]) && \is_string($incoming[$key]) ? \trim($incoming[$key]) : '';
+            $stored = isset($saved[$key]) && \is_string($saved[$key]) ? $saved[$key] : '';
+
+            if ($stored !== '' && SecretMask::isMasked($value)) {
+                $incoming[$key] = $stored;
+            }
+        }
+
+        return $incoming;
     }
 
     /**

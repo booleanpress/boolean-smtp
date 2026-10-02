@@ -71,13 +71,7 @@ function OAuthRefreshHistoryPanelContent({ connectionId, driver, onRefresh }) {
                 setActionMessage(actualData.history_warning);
             }
         } catch (err) {
-            const message = err?.message || t('oauth_refresh_history.fetch_failed', 'Failed to fetch refresh history.');
-
-            if (message.includes('rest_cookie_invalid_nonce') || message.includes('Cookie check failed')) {
-                setError(t('oauth_refresh_history.nonce_invalid', 'Session nonce is invalid or expired. Please refresh the page and try again.'));
-            } else {
-                setError(message);
-            }
+            setError(err?.message || t('oauth_refresh_history.fetch_failed', 'Failed to fetch refresh history.'));
         } finally {
             setLoading(false);
         }

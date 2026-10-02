@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 
 import { translate } from '../hooks/useTranslations';
+import { endpointUrl } from '../lib/rest';
 
 const config = window.BooleanSmtpAdmin || {};
 
@@ -110,7 +111,7 @@ function notifySessionEnded() {
 }
 
 async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
-    const url = `${API_BASE}/${endpoint}`.replace(/\/+/g, '/').replace(':/', '://');
+    const url = endpointUrl(API_BASE, endpoint);
 
     const headers = {
         'X-WP-Nonce': resolveNonce(),
@@ -133,6 +134,12 @@ async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
 
     const raw = await response.text();
     const contentType = response.headers.get('content-type') || '';
+
+    // A server that sends a logged-out REST call to the login page answers with that page's HTML.
+    if (response.redirected && /\/wp-login\.php/.test(response.url || '')) {
+        notifySessionEnded();
+        throw new ApiError(translate('common.session_ended', 'Your WordPress session has ended. Reload the page to log in again.'), 401, null);
+    }
 
     let payload;
     if (contentType.includes('application/json') || raw.trimStart().startsWith('{') || raw.trimStart().startsWith('[')) {
@@ -161,7 +168,10 @@ async function apiFetch(endpoint, options = {}, retriedOnInvalidNonce = false) {
             return apiFetch(endpoint, options, true);
         }
         if (loginRejected) {
+            // WordPress's own words here ("Cookie check failed") mean nothing to the user; the screen
+            // shows the same sentence as the toast.
             notifySessionEnded();
+            throw new ApiError(translate('common.session_ended', 'Your WordPress session has ended. Reload the page to log in again.'), 401, payload);
         }
 
         const msg =

@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import NotificationsSkeleton from '../components/skeletons/NotificationsSkeleton';
 import { useTranslations } from '../hooks/useTranslations';
 import { alertDocsUrl } from '@/config/docs';
+import { isMaskedSecret } from '@/components/onboarding/providerCatalog';
 // Bundled with the plugin: an admin page never loads images from a third-party host.
 import slackIcon from '../assets/alerts/slack-icon.svg';
 import telegramIcon from '../assets/alerts/telegram.svg';
@@ -44,6 +45,18 @@ const PROVIDER_SETUP_HINTS = {
         'Create a webhook, then copy and paste its URL below.',
     ],
 };
+
+/**
+ * Whether a settings field holds a secret: the server sends a saved one back with only its last
+ * four characters showing, and keeps the saved value when it comes back unchanged.
+ *
+ * @since 1.0.0
+ * @param {{ type?: string, secret?: boolean }} field Field definition from the provider's schema.
+ * @returns {boolean}
+ */
+function isSecretField(field) {
+    return field.secret === true || field.type === 'password';
+}
 
 const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest, testingForm = false, isEditing = false, saving = false, errors = {} }) => {
     const { t } = useTranslations();
@@ -165,6 +178,11 @@ const ChannelEditor = ({ form, setForm, available, onSave, onCancel, onSendTest,
                                                     )}
                                                 </div>
                                                 {errors[key] && <FieldDescription className="text-destructive">{errors[key]}</FieldDescription>}
+                                                {!errors[key] && isSecretField(field) && isMaskedSecret(form.settings[key]) && (
+                                                    <FieldDescription>
+                                                        {t('notifications.secret_saved', 'Saved. Only the last 4 characters are shown; paste a new value to replace it.')}
+                                                    </FieldDescription>
+                                                )}
                                                 {isTelegramChatId && detectedChats !== null && (
                                                     detectedChats.length > 0 ? (
                                                         <div className="mt-2 space-y-1 rounded-md border p-2">

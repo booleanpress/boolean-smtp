@@ -23,7 +23,7 @@ issues and pull requests are read, but changes land there first.
 ## Build the admin screen
 
 The plugin zip on WordPress.org contains the built files in `public/`. To build them from this source you need
-Node.js 22 or newer and [pnpm](https://pnpm.io/) 10 or newer:
+Node.js 22.12 or newer and [pnpm](https://pnpm.io/) 10 or newer:
 
 ```bash
 cd resources

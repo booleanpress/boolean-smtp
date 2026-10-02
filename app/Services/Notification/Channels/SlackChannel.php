@@ -159,7 +159,8 @@ class SlackChannel implements NotificationChannelContract {
             'webhook_url'         => [
                 'type'     => 'text',
                 'label'    => $this->t('Incoming Webhook URL'),
-                'required' => true
+                'required' => true,
+                'secret'   => true
             ],
             'allow_custom_domain' => [
                 'type'     => 'checkbox',

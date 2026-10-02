@@ -40,6 +40,7 @@ use BooleanSmtp\Services\Mailer\OAuth\OAuthPendingConnection;
 use BooleanSmtp\Services\Settings\CredentialSourceDetector;
 use BooleanSmtp\Services\Settings\ConstantSettingsResolver;
 use BooleanSmtp\Support\Debug\ApiDebugResponse;
+use BooleanSmtp\Support\SecretMask;
 use BooleanSmtp\Support\WordPressMailerLoader;
 use BooleanSmtp\Core\Foundation\Application;
 
@@ -1198,7 +1199,7 @@ class ConnectionController extends Controller {
             // at rest -- see its isSensitiveKey() docblock for why this can't be its own
             // independently-maintained list without drifting out of sync again.
             if ($this->encryptor->isSensitiveKey((string) $key) && is_string($value) && strlen($value) > 4) {
-                $masked[$key] = str_repeat('*', strlen($value) - 4) . substr($value, -4);
+                $masked[$key] = SecretMask::mask($value);
             } else {
                 $masked[$key] = $value;
             }
@@ -1949,11 +1950,7 @@ class ConnectionController extends Controller {
      * @return bool True when the value matches the masked-placeholder pattern.
      */
     private function isLikelyMaskedSecretPlaceholder(string $value): bool {
-        if ($value === '') {
-            return false;
-        }
-
-        return \preg_match('/^\*{4,}\S{0,8}$/', $value) === 1;
+        return SecretMask::isMasked($value);
     }
 
     /**

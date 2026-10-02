@@ -12,14 +12,29 @@ Send WordPress email through Amazon SES, Gmail, Microsoft 365 or any SMTP, with 
 
 == Description ==
 
-By default WordPress sends email with PHP's `mail()` on your web server: usually unauthenticated, often rate-limited or blocked by the host, and easy for mailbox providers to reject or file as spam. BooleanSMTP sends every email your site writes (password resets, WooCommerce orders, form notifications) through a real email service, authenticated with your own domain, and keeps a record of what happened to each one.
+**BooleanSMTP is a WordPress or WP Mail SMTP plugin that gets your site's email delivered.** It fixes the most common WordPress email problem, messages that never arrive or land in spam, by sending every email through a real, authenticated email service: Amazon SES, Gmail and Google Workspace, Microsoft 365 and Outlook, or any SMTP server.
 
-When a provider has a bad minute, BooleanSMTP doesn't give up. The message is retried on your fallback connection and then on your other connections, and you hear about it only if every attempt fails. Your connections and sign-ins are checked on a schedule, so a revoked key or an expired token shows up on your screen before a customer's email needs it.
+Out of the box, WordPress sends email with PHP's `mail()` on your web server: usually unauthenticated, often rate-limited or blocked by the host, and easy for Gmail, Outlook and other mailbox providers to reject or file as spam. Password resets go missing, WooCommerce order emails never reach customers, and contact form notifications quietly disappear. BooleanSMTP sends them through your email provider instead, authenticated with your own domain for better deliverability, and keeps a record of what happened to every message.
+
+Sending is only half the job. When a provider has a bad minute, BooleanSMTP doesn't give up: the message is retried on your fallback connection and then on your other connections, and you hear about it only if every attempt fails. Your connections and sign-ins are checked on a schedule, so a revoked key or an expired token shows up on your screen, or in Slack, Discord or Telegram, before a customer's email needs it.
+
+**At a glance**
+
+* **Reliable email delivery** for password resets, WooCommerce orders, contact forms, memberships and every other plugin that sends through `wp_mail()`.
+* **Your choice of provider:** Amazon SES, Gmail and Google Workspace, Microsoft 365 and Outlook through the SES, Gmail and Microsoft Graph APIs, or any SMTP server, including the relays of SendGrid, Mailgun, Postmark, Brevo and SMTP2GO.
+* **Automatic failover and retries:** a fallback connection takes over the moment a send fails, then your other connections take their turn.
+* **A complete email log:** every message with its status, error, timing and content. Search it, preview any email and resend it.
+* **Alerts that matter:** Slack, Discord and Telegram notices when an email has finally failed, a connection fails its health check or a sign-in can't be refreshed.
+* **Sender-based routing:** each From address sends through its own connection.
+* **Email simulation for staging:** nothing leaves a test site, and every message is still logged.
+* **Painless switching:** bring your connections and email log over from six popular SMTP plugins, tested before anything goes live.
+* **Private and secure:** no telemetry and no licence checks; passwords, API keys and tokens are encrypted, and logs stay in your own database.
+* **Built for developers:** WP-CLI commands, a REST API, documented hooks and a background queue.
 
 = Send through the service you already use =
 
 * **Amazon SES:** over the SES API in any region, or over SMTP in every region where AWS offers it. Keep the keys in the plugin (encrypted), in `wp-config.php` constants or in environment variables, or on EC2 let the plugin use the instance's IAM role (opt-in).
-* **Gmail and Google Workspace:** over the Gmail API or SMTP, including Workspace's SMTP relay, signed in with OAuth through your own Google app.
+* **Gmail and Google Workspace:** over the Gmail API, signed in with OAuth through your own Google app, or over SMTP with an app password, including Workspace's SMTP relay.
 * **Microsoft 365 and Outlook:** over the Microsoft Graph API (Microsoft is retiring password sign-in for SMTP), signed in with OAuth through your own Microsoft Entra app.
 * **Any SMTP server:** your host's mail server, or the SMTP relay of SendGrid, Mailgun, Postmark, Brevo, SMTP2GO or any other service that offers one. You set the host, port, encryption and authentication.
 * **PHP mail():** the server's default, now logged and monitored like everything else.
@@ -64,12 +79,6 @@ Bring your connections and email log over from FluentSMTP, WP Mail SMTP, Post SM
 * A REST API (`booleansmtp/v1`) for administrators, and documented `boolean_smtp_` actions and filters; `wp boolean-smtp hooks:list` prints them.
 * `boolean_smtp_mail()` sends through the full pipeline (routing, logging, fallback) from your own code, and `boolean_smtp_queue()` hands a message to the background worker.
 
-= Secure by default =
-
-* Passwords, API keys and OAuth tokens are encrypted at rest (AES-256-CBC with HMAC-SHA256) with `BOOLEAN_SMTP_ENCRYPTION_KEY` from `wp-config.php` when you define it, otherwise your site's authentication key, otherwise a key generated once for the site. They are never shown in full.
-* Every admin screen and REST route requires the `manage_options` capability.
-* No telemetry, no licence check, and no connection to anything you didn't set up.
-
 = A modern admin =
 
 * A fast admin app with light and dark themes.
@@ -81,34 +90,72 @@ WooCommerce, contact-form and membership plugins, and WordPress itself: anything
 
 = Source code =
 
-The admin screen ships compiled. Its readable source, with the build instructions, is on [GitHub](https://github.com/booleanpress/boolean-smtp).
+The admin screen ships compiled in `public/assets/`. Its human-readable source, the build configuration and the build instructions are public at [https://github.com/booleanpress/boolean-smtp](https://github.com/booleanpress/boolean-smtp).
+
+To build it, install Node.js 22.12 or newer and pnpm 10 or newer, then run `pnpm install` and `pnpm build` in the repository's `resources/` folder. The build writes `public/manifest.json` and `public/assets/`.
 
 == External services ==
 
-BooleanSMTP connects only to the services you set up, and only for what you set them up to do. Nothing is contacted when the plugin is activated, and no usage data is collected. Each service's own terms and privacy policy apply to what it receives.
+BooleanSMTP contacts a service only after you set it up in the plugin, and only to do what you set it up for. Nothing is contacted when the plugin is activated, and no usage data is collected. Sending an email, including a test, a resend or a retry, transmits its sender, recipients, subject, body, headers and attachments to the connection's provider. Connection tests and the scheduled health check (every 15 minutes by default) contact the same service without sending a message, except where noted below. Passwords, API keys and tokens go only to the service they belong to.
 
-**Email providers.** BooleanSMTP contacts a connection's provider when you save or test the connection, when its health check or sign-in refresh runs, and whenever WordPress sends an email through it. Sending transmits the message (sender, recipients, subject, body, headers and attachments) together with the connection's sign-in (password, API key or OAuth token).
+= Google (Gmail, Google Workspace) =
 
-* Google (Gmail, Google Workspace): `gmail.googleapis.com`, `oauth2.googleapis.com`, `accounts.google.com`, `smtp.gmail.com`, `smtp-relay.gmail.com`.
-* Microsoft (Microsoft 365, Outlook): `graph.microsoft.com`, `login.microsoftonline.com`.
-* Amazon Web Services (Amazon SES): `email.<region>.amazonaws.com` for the API and `email-smtp.<region>.amazonaws.com` for SMTP. If you turn on EC2 instance-role credentials, the plugin also reads temporary credentials from the instance metadata address `169.254.169.254`, which stays inside the server.
-* SendGrid and Postmark SMTP relays: only when you import a SendGrid or Postmark connection from another SMTP plugin; it becomes a Custom SMTP connection to `smtp.sendgrid.net` or `smtp.postmarkapp.com`.
-* Custom SMTP: the server you enter.
+Used when you add a Google connection, to send your site's email from your Google account.
 
-**Sign-in relay (BooleanPress).** When you connect Google or Microsoft with OAuth, the provider sends its one-time authorization code to `https://oauth.booleansmtp.com/<provider>`, operated by BooleanPress, which immediately redirects your browser back to your site's admin with it. The relay receives only that single-use code and the signed state value that identifies your site, stores neither, and never sees your client secret or any token; your site exchanges the code with the provider directly. To use your site's own callback URL instead, define `BOOLEANSMTP_USE_LOCAL_OAUTH_REDIRECTS` as `true` in `wp-config.php`. [Terms](https://booleansmtp.com/terms/), [Privacy Policy](https://booleansmtp.com/privacy/)
+* Gmail API, signed in with OAuth: when you sign in to Google from the connection form, your browser opens Google's consent page at `accounts.google.com` with your OAuth client ID, the redirect address, the `gmail.send` permission and a signed state value. Your site then sends the client ID, the client secret and the one-time code to `oauth2.googleapis.com` to get access tokens, and sends the refresh token there whenever access needs renewing (on a schedule, or before a send when the token has expired). Each email goes to `gmail.googleapis.com` with the access token; checks read the account's address there.
+* SMTP, signed in with an app password: each email goes to `smtp.gmail.com`, or to Google Workspace's relay at `smtp-relay.gmail.com`, with your Google address and app password.
 
-**Alerts.** BooleanSMTP posts a short notice to the webhook or bot you configured when you set up or test an alert, and whenever the alert fires: an email finally failed, a connection failed its health check, or a sign-in could not be refreshed. The notice says what happened. For a failed email it carries the recipient, the subject and the mail provider, with a link to the entry in your site's email log; for a connection or sign-in problem, the connection's name and provider, and for a sign-in the kind of failure (for example, token expired). Raw error messages, credentials and message bodies are never included.
+Google [Terms of Service](https://policies.google.com/terms), [Google APIs Terms of Service](https://developers.google.com/terms), [Privacy Policy](https://policies.google.com/privacy).
 
-* Slack: your incoming-webhook URL on `hooks.slack.com`.
-* Discord: your webhook URL on `discord.com` or `discordapp.com` (including their `canary.` and `ptb.` subdomains).
-* Telegram: the Bot API at `api.telegram.org`, using your bot token. The **Detect** button also asks the Bot API for your bot's recent updates (`getUpdates`) to find the chat ID.
-* If you mark a Slack or Discord webhook as proxied through a third-party relay, alerts go to the HTTPS address you entered instead.
+= Microsoft (Microsoft 365, Outlook) =
+
+Used when you add a Microsoft connection, to send your site's email over the Microsoft Graph API through your own Microsoft Entra app.
+
+* Sign-in: checking the app's details in the connection form sends your tenant ID, client ID and client secret to `login.microsoftonline.com`. When you sign in to Microsoft, your browser opens Microsoft's sign-in page there with your client ID, the redirect address, the `Mail.Send`, `Mail.Send.Shared`, `User.Read` and `offline_access` permissions, a signed state value and your From address as a sign-in hint. Your site then sends the client ID, the client secret and the one-time code to `login.microsoftonline.com` to get access tokens, and sends the refresh token there whenever access needs renewing.
+* Sending: each email goes to `graph.microsoft.com` with the access token. After sign-in, the site reads the signed-in mailbox's address there. Testing the connection also sends a short "[BooleanSMTP] Microsoft capability check" email to the connection's From address.
+
+Microsoft [Services Agreement](https://www.microsoft.com/en-us/servicesagreement), [Microsoft APIs Terms of Use](https://learn.microsoft.com/en-us/legal/microsoft-apis/terms-of-use), [Privacy Statement](https://www.microsoft.com/en-us/privacy/privacystatement).
+
+= Amazon Web Services (Amazon SES) =
+
+Used when you add an Amazon SES connection, to send your site's email through your AWS account.
+
+* API: each email goes to `email.<region>.amazonaws.com`, or to the custom endpoint you set. Requests carry your access key ID and a signature made with your secret key (plus a session token when temporary credentials are used); the secret key itself is never sent. Checking the keys reads your sending quota and whether your From address or its domain is verified in SES; connection checks read the sending quota.
+* SMTP: each email goes to `email-smtp.<region>.amazonaws.com` with your SES SMTP user name and password.
+* EC2 instance role (off unless you define `BOOLEANSMTP_AWS_ENABLE_IMDS_ROLE_SOURCE` as `true`): the plugin requests temporary credentials from the instance metadata address `169.254.169.254`, which stays inside the server.
+
+AWS [Service Terms](https://aws.amazon.com/service-terms/), [Privacy Notice](https://aws.amazon.com/privacy/).
+
+= SendGrid and Postmark SMTP relays =
+
+When you import a SendGrid or Postmark connection from another SMTP plugin, it becomes a Custom SMTP connection to `smtp.sendgrid.net` or `smtp.postmarkapp.com`, with the imported API key or server token as the password. The import creates an inactive draft and sends nothing; once you turn the connection on, its tests and emails go to that server.
+
+SendGrid (Twilio) [Terms of Service](https://www.twilio.com/en-us/legal/tos), [Privacy Notice](https://www.twilio.com/en-us/legal/privacy). Postmark (ActiveCampaign) [Terms of Service](https://postmarkapp.com/terms-of-service), [Privacy Policy](https://www.activecampaign.com/legal/privacy-policy).
+
+= Custom SMTP =
+
+Each email goes to the SMTP server you enter, with the user name and password you enter; connection checks connect to it without sending a message. That server's operator receives the message, and its own terms and privacy policy apply.
+
+= BooleanSMTP OAuth relay =
+
+Used when you sign in to Google or Microsoft, unless you turn it off. The provider sends its one-time sign-in code (or its error, if sign-in was refused) to `oauth.booleansmtp.com`, operated by BooleanPress, which immediately sends your browser back to your site's admin with it. Along with the code, the relay receives the state value your site created: your site's address, the connection's ID, the provider, a timestamp and the admin screen to return to, signed so it cannot be altered (it is not encrypted). The relay does not store them, and never receives your client secret, any token or any email; your site exchanges the code with Google or Microsoft directly. The relay runs on Cloudflare, which, like any web host, sees your browser's IP address and request headers. To skip the relay, define `BOOLEANSMTP_USE_LOCAL_OAUTH_REDIRECTS` as `true` in `wp-config.php` and register your site's own callback URL, shown on the connection form, in your Google or Microsoft app.
+
+BooleanPress [Terms of Service](https://booleansmtp.com/terms/), [Privacy Policy](https://booleansmtp.com/privacy/).
+
+= Slack, Discord and Telegram (alerts) =
+
+Used when you connect an alert. Saving an alert sends nothing. A notice is sent when you send a test, and whenever an enabled alert fires: an email finally failed, a connection failed its health check, or a sign-in could not be refreshed. Each notice names the alert, its severity and time, with a link to the matching screen in your site's admin. For a failed email it adds the recipient, the subject, the mail provider, the plugin or theme that sent it, and the email log and connection IDs. For a connection or sign-in problem it adds the connection's name and provider, and for a sign-in the kind of failure (for example, token expired). Raw error messages, credentials and message bodies are never included.
+
+* Slack: posted to your incoming-webhook URL on `hooks.slack.com`; its header also carries your site's name. Slack [Terms of Service](https://slack.com/main-services-agreement), [Privacy Policy](https://slack.com/trust/privacy/privacy-policy).
+* Discord: posted to your webhook URL on `discord.com` or `discordapp.com` (including their `canary.` and `ptb.` subdomains), under the bot name you set. Discord [Terms of Service](https://discord.com/terms), [Privacy Policy](https://discord.com/privacy).
+* Telegram: sent through the Bot API at `api.telegram.org` with your bot token, your chat ID and, if you set one, a topic ID. The **Detect** button also asks the Bot API for your bot's recent updates (`getUpdates`) to list your chat IDs. Telegram [Terms of Service](https://telegram.org/tos), [Bot Developer Terms](https://telegram.org/tos/bot-developers), [Privacy Policy](https://telegram.org/privacy).
+* Proxied webhooks: if you mark a Slack or Discord webhook as proxied through a third-party relay, the notice goes to the HTTPS address you entered instead, and that relay's operator receives it under its own terms.
 
 == Privacy ==
 
 * Email logs, including message bodies, are stored only in your own database and are pruned by the retention setting. Deleting the plugin keeps them, along with your connections and settings, unless you turn on **Settings → Delete data on uninstall** first.
 * Passwords, API keys and OAuth tokens are encrypted before they are stored and are never shown in full in the admin screens.
-* Log files are off by default. The SMTP transcript of a send is kept only when a developer enables it with the `boolean_smtp_should_store_smtp_transcript` filter: for 7 days, under `wp-content/uploads/boolean-smtp/logs/debug-sessions/`, with the login exchange hidden and a file name that cannot be guessed.
+* The plugin's own log files are off by default; its warnings and errors go to PHP's error log, as any plugin's do. The SMTP transcript of a send is kept only when a developer enables it with the `boolean_smtp_should_store_smtp_transcript` filter: for 7 days, under `wp-content/uploads/boolean-smtp/logs/debug-sessions/`, with the login exchange hidden and a file name that cannot be guessed.
 
 == Installation ==
 
@@ -119,13 +166,9 @@ BooleanSMTP connects only to the services you set up, and only for what you set 
 
 == Frequently Asked Questions ==
 
-= Why are my WordPress emails not arriving, or landing in spam? =
-
-WordPress sends mail with PHP's `mail()` by default, usually without authentication, so hosts throttle it and mailbox providers reject it or file it as spam. BooleanSMTP sends through an authenticated email service or SMTP server using your own domain. For the best inbox placement, also publish SPF, DKIM and DMARC records for your domain as your email provider describes.
-
 = Does the plugin phone home or need a licence? =
 
-No. The plugin contacts only the mail providers and alert services you configure (see *External services*). There is no licence check and no telemetry.
+No. There is no licence check and no telemetry. Besides the mail providers and alert services you configure, the only other service is the BooleanPress OAuth relay, which passes the one-time sign-in code back to your site when you connect Google or Microsoft, unless you turn it off (see *External services*).
 
 = Can I send through Amazon SES? =
 
@@ -133,7 +176,7 @@ Yes, over the SES API in any region, or over SMTP in every region where AWS offe
 
 = Can I send through Gmail or Google Workspace? =
 
-Yes. Create an OAuth client in your Google Cloud project, paste its ID and secret into a Google connection, and sign in. Mail then goes out over the Gmail API, or over SMTP if you prefer.
+Yes, two ways. Over the Gmail API: create an OAuth client in your Google Cloud project, paste its ID and secret into a Google connection, and sign in. Over SMTP: enter your Google address and an app password; Google Workspace's SMTP relay works the same way.
 
 = Can I send through Microsoft 365 or Outlook? =
 
@@ -166,10 +209,6 @@ Nothing, by default. Deactivating never deletes anything, and deleting the plugi
 = Where are the email logs stored, and for how long? =
 
 In your site's database, in the plugin's own tables. The retention period is set under **Settings** (from 7 days to 1 year, 30 days by default) and enforced by a daily cleanup. A developer can keep logs forever by returning `0` from the `boolean_smtp_log_retention_days` filter.
-
-= Does BooleanSMTP write log files? =
-
-Not unless you ask it to. A developer can switch on the `app` channel (the plugin's warnings and errors) and the `core` channel (the framework's messages) with the `boolean_smtp_log_file_enabled` filter from a must-use plugin. The files go to `wp-content/uploads/boolean-smtp/logs/` with unguessable names. Each channel starts a new file every day and at 5 MB, and keeps 14 days (`boolean_smtp_log_file_retention_days`); the whole folder is held under 50 MB. On nginx, which ignores `.htaccess`, also deny the folder in your server configuration: `location ~* /wp-content/uploads/boolean-smtp/logs/ { deny all; }`.
 
 = Does it work with WP-CLI? =
 

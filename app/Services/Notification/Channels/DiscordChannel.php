@@ -164,7 +164,8 @@ class DiscordChannel implements NotificationChannelContract {
             'webhook_url'         => [
                 'type'     => 'text',
                 'label'    => $this->t('Webhook URL'),
-                'required' => true
+                'required' => true,
+                'secret'   => true
             ],
             'username'            => [
                 'type'     => 'text',

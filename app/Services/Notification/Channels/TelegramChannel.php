@@ -229,7 +229,8 @@ class TelegramChannel implements NotificationChannelContract {
             'bot_token'         => [
                 'type'     => 'password',
                 'label'    => $this->t('Bot token'),
-                'required' => true
+                'required' => true,
+                'secret'   => true
             ],
             'chat_id'           => [
                 'type'     => 'text',

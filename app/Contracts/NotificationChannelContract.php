@@ -61,9 +61,12 @@ interface NotificationChannelContract
     /**
      * Return the settings schema used to render the channel's configuration UI.
      *
+     * A field marked `secret` (or of type `password`) leaves the server only with its last four
+     * characters showing; sent back unchanged, it keeps the saved value.
+     *
      * @since 1.0.0
      *
-     * @return array<string, array{type: string, label: string, required: bool}> Field
+     * @return array<string, array{type: string, label: string, required: bool, secret?: bool}> Field
      *         definitions keyed by setting name.
      */
     public function getSettingsSchema(): array;
