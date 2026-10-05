@@ -1,7 +1,6 @@
 # BooleanSMTP
 
-Reliable email delivery for WordPress. This repository is the public, human-readable source of the free
-plugin published at https://wordpress.org/plugins/boolean-smtp/ — version 1.0.0.
+Reliable email delivery for WordPress. This repository is the public, human-readable source code.
 
 It holds exactly the PHP that ships in the plugin zip, plus the source of the admin screen (a React app built
 with Vite) and the files needed to build it. It is published from the development repository at each release;
